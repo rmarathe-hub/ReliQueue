@@ -7,7 +7,7 @@ A durable distributed job queue and task scheduler built with FastAPI, Postgres,
 Week 1 — Foundation (in progress)
 
 - [x] Day 1: FastAPI backend with health endpoint
-- [ ] Day 2: Docker Compose + Postgres
+- [x] Day 2: Docker Compose + Postgres
 - [ ] Day 3: Database schema and migrations
 - [ ] Day 4: Job submission API
 - [ ] Day 5: Job listing, detail, and events API
@@ -31,13 +31,29 @@ Week 1 — Foundation (in progress)
 
 ## Local setup
 
+### Docker Compose (recommended)
+
+Starts Postgres and the API together:
+
+```bash
+docker compose up --build
+```
+
+### Local API only
+
 ```bash
 cd backend
 python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-cp ../.env.example ../.env    # optional; defaults work for Day 1
+cp ../.env.example ../.env
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+For local API + Docker Postgres, start only the database:
+
+```bash
+docker compose up db
 ```
 
 ## API
@@ -51,7 +67,7 @@ curl http://localhost:8000/health
 Expected response:
 
 ```json
-{"status": "ok"}
+{"status": "ok", "database": "ok"}
 ```
 
 Interactive docs: [http://localhost:8000/docs](http://localhost:8000/docs)
@@ -64,8 +80,11 @@ ReliQueue/
 │   ├── app/
 │   │   ├── api/routes/   # HTTP route handlers
 │   │   ├── core/         # Config and shared utilities
+│   │   ├── db/           # Database engine and session
 │   │   └── main.py       # FastAPI application entrypoint
+│   ├── Dockerfile
 │   └── requirements.txt
+├── docker-compose.yml
 ├── .env.example
 └── README.md
 ```
