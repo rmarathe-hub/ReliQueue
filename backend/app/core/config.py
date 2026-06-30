@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     api_port: int = 8000
     database_url: str = "postgresql+asyncpg://reliqueue:reliqueue@localhost:5432/reliqueue"
     test_database_url: str = "postgresql+asyncpg://reliqueue:reliqueue@localhost:5432/reliqueue_test"
+    worker_lease_seconds: int = 60
 
 
 settings = Settings()

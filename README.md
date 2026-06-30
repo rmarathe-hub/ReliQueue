@@ -12,6 +12,7 @@ ReliQueue stores jobs in Postgres, exposes a REST API for submission and inspect
 - Job submission with idempotency keys
 - Job list, detail, and event timeline APIs
 - Postgres-backed pytest suite
+- Worker runner skeleton with registration and polling
 
 ## Architecture (draft)
 
@@ -168,6 +169,34 @@ pytest -v
 
 Tests use a separate `reliqueue_test` database, create it if needed, run migrations, and truncate tables between tests.
 
+## Workers
+
+Start a worker process (requires Postgres running and migrations applied):
+
+```bash
+cd backend
+source .venv/bin/activate
+python -m app.worker.runner --worker-id worker-1
+```
+
+Optional flags:
+
+```bash
+python -m app.worker.runner --worker-id worker-1 --queue-name default --poll-interval 2
+```
+
+The worker registers in the `workers` table, sends heartbeats, and claims pending jobs using Postgres `FOR UPDATE SKIP LOCKED`. Claimed jobs move to `running` with a worker lease. Handler execution and completion are added on Day 11+.
+
+### Supported demo job types
+
+| `job_type` | Behavior |
+|------------|----------|
+| `sleep` | Waits `payload.seconds` |
+| `fail_once` | Fails on first attempt (`attempts == 1`), succeeds on retry |
+| `fail_always` | Always raises an error |
+| `random_fail` | Fails with `payload.probability` (default `0.5`) |
+| `generate_report` | Simulates report generation for `payload.duration` seconds |
+
 ## Configuration
 
 Copy `.env.example` to `.env` and adjust as needed.
@@ -177,6 +206,7 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `DATABASE_URL` | Async Postgres URL for the API |
 | `TEST_DATABASE_URL` | Postgres URL used by pytest |
 | `DEBUG` | Enable FastAPI debug mode |
+| `WORKER_LEASE_SECONDS` | Worker lease duration for claimed jobs |
 
 ## Project structure
 
@@ -190,6 +220,7 @@ ReliQueue/
 │   │   ├── models/          # SQLAlchemy models
 │   │   ├── schemas/         # Pydantic models
 │   │   ├── services/        # Business logic
+│   │   ├── worker/          # Worker runner CLI
 │   │   └── main.py
 │   ├── alembic/             # Migrations
 │   ├── tests/               # Pytest suite
