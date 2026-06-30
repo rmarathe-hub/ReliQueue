@@ -71,6 +71,20 @@ def test_get_job_not_found_returns_404(client):
     assert response.json()["detail"] == "Job not found"
 
 
+def test_get_job_events_not_found_returns_404(client):
+    response = client.get("/api/jobs/00000000-0000-0000-0000-000000000000/events")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Job not found"
+
+
+def test_create_job_validation_error(client, job_payload):
+    invalid_payload = {**job_payload, "max_attempts": 0}
+    response = client.post("/api/jobs", json=invalid_payload)
+
+    assert response.status_code == 422
+
+
 def test_job_events_created_on_create(client, job_payload):
     created = client.post("/api/jobs", json=job_payload)
     job_id = created.json()["id"]
