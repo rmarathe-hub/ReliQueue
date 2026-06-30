@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     database_url: str = "postgresql+asyncpg://reliqueue:reliqueue@localhost:5432/reliqueue"
+    test_database_url: str = "postgresql+asyncpg://reliqueue:reliqueue@localhost:5432/reliqueue_test"
 
 
 settings = Settings()
