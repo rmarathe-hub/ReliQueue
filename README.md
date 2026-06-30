@@ -8,7 +8,7 @@ Week 1 — Foundation (in progress)
 
 - [x] Day 1: FastAPI backend with health endpoint
 - [x] Day 2: Docker Compose + Postgres
-- [ ] Day 3: Database schema and migrations
+- [x] Day 3: Database schema and migrations
 - [ ] Day 4: Job submission API
 - [ ] Day 5: Job listing, detail, and events API
 - [ ] Day 6: API tests
@@ -56,6 +56,22 @@ For local API + Docker Postgres, start only the database:
 docker compose up db
 ```
 
+### Database migrations
+
+With Postgres running:
+
+```bash
+cd backend
+source .venv/bin/activate
+alembic upgrade head
+```
+
+From Docker:
+
+```bash
+docker compose exec api alembic upgrade head
+```
+
 ## API
 
 ### Health check
@@ -81,7 +97,9 @@ ReliQueue/
 │   │   ├── api/routes/   # HTTP route handlers
 │   │   ├── core/         # Config and shared utilities
 │   │   ├── db/           # Database engine and session
+│   │   ├── models/       # SQLAlchemy models and enums
 │   │   └── main.py       # FastAPI application entrypoint
+│   ├── alembic/          # Database migrations
 │   ├── Dockerfile
 │   └── requirements.txt
 ├── docker-compose.yml
