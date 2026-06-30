@@ -15,7 +15,7 @@ async def complete_job_success(
     worker_id: str,
 ) -> Job | None:
     job = await db.get(Job, job_id)
-    if job is None:
+    if job is None or job.status != JobStatus.RUNNING:
         return None
 
     now = datetime.now(UTC)

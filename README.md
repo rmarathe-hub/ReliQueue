@@ -2,9 +2,11 @@
 
 A durable distributed job queue and task scheduler built with **FastAPI**, **Postgres**, and **Python workers**.
 
-ReliQueue stores jobs in Postgres, exposes a REST API for submission and inspection, and records an append-only event timeline for every job. Workers, retries, and a dashboard are coming in later weeks.
+ReliQueue stores jobs in Postgres, exposes a REST API for submission and inspection, and runs Python workers that claim and execute jobs safely under concurrency. Retries, dead-letter handling, and a dashboard are coming in later weeks.
 
-## What works today (Week 1)
+## What works today
+
+**Week 1 — API foundation**
 
 - FastAPI service with health checks
 - Docker Compose environment (API + Postgres)
@@ -12,29 +14,50 @@ ReliQueue stores jobs in Postgres, exposes a REST API for submission and inspect
 - Job submission with idempotency keys
 - Job list, detail, and event timeline APIs
 - Postgres-backed pytest suite
-- Worker runner skeleton with registration and polling
 
-## Architecture (draft)
+**Week 2 — Worker engine**
+
+- Worker runner with registration, heartbeats, and polling
+- Safe concurrent job claiming via Postgres `FOR UPDATE SKIP LOCKED`
+- Job handlers (`sleep`, `fail_once`, `fail_always`, `random_fail`, `generate_report`)
+- Successful job completion and `job_succeeded` events
+- Multi-worker demo scripts and concurrency tests
+
+## Architecture
 
 ```mermaid
-flowchart LR
+flowchart TB
     Client[API Client] --> API[FastAPI]
     API --> DB[(Postgres)]
-    API --> Jobs[jobs table]
-    API --> Events[job_events table]
-    Worker[Python workers - Week 2+] --> DB
+
+    W1[Worker 1] --> DB
+    W2[Worker 2] --> DB
+    WN[Worker N] --> DB
+
+    subgraph Postgres
+        Jobs[jobs]
+        Events[job_events]
+        Workers[workers]
+    end
 ```
 
-**Flow today**
+**Submit path**
 
 1. Client submits a job via `POST /api/jobs`.
 2. API writes a `pending` row to `jobs` and a `job_created` event to `job_events`.
 3. Client polls list/detail/events endpoints to inspect job state.
 
-**Coming in Week 2+**
+**Worker path**
 
-- Python worker processes that claim jobs with `FOR UPDATE SKIP LOCKED`
-- Retries, dead-letter queue, lease recovery, metrics, and dashboard
+1. Each worker registers in `workers` and polls its queue on an interval.
+2. A worker claims the next eligible `pending` job inside a Postgres transaction using `FOR UPDATE SKIP LOCKED`.
+3. The worker runs the handler, then marks the job `succeeded` and appends a `job_succeeded` event.
+4. Multiple workers can poll the same queue without claiming the same job twice.
+
+**Coming in Week 3+**
+
+- Retries with backoff, dead-letter queue, and lease recovery for crashed workers
+- Metrics, dashboard, CI, and portfolio polish
 
 ## Prerequisites
 
@@ -197,6 +220,59 @@ The worker registers in the `workers` table, claims pending jobs using Postgres 
 | `random_fail` | Fails with `payload.probability` (default `0.5`) |
 | `generate_report` | Simulates report generation for `payload.duration` seconds |
 
+### Multi-worker demo
+
+With API and Postgres running (`docker compose up`), start three workers in separate terminals:
+
+```bash
+cd backend
+source .venv/bin/activate
+python -m app.worker.runner --worker-id worker-1
+python -m app.worker.runner --worker-id worker-2
+python -m app.worker.runner --worker-id worker-3
+```
+
+Seed 20 short sleep jobs (from repo root, with the backend venv activated):
+
+```bash
+python scripts/seed_jobs.py --count 20 --job-type sleep
+```
+
+Worker logs include the worker ID in each line, for example `[worker-2] job claimed job_id=...`.
+
+Verify all jobs completed and no job was claimed twice:
+
+```bash
+python scripts/verify_queue.py --expected-succeeded 20
+```
+
+The verify script prints status counts, claims per worker, and fails if any job has duplicate `job_claimed` events.
+
+### How workers claim jobs
+
+ReliQueue uses Postgres row locks instead of a separate coordination service. When a worker polls for work, `claim_next_job` runs a transaction that:
+
+1. Selects one eligible `pending` job (`run_at <= now`) for the worker's queue, ordered by `priority DESC`, then `run_at ASC`.
+2. Applies `FOR UPDATE SKIP LOCKED` so concurrent workers skip rows already locked by another open transaction.
+3. Updates the claimed row to `running`, sets `locked_by`, `locked_at`, and `lease_expires_at`, and increments `attempts`.
+4. Appends a `job_claimed` event with the worker ID and lease metadata.
+
+**Why `SKIP LOCKED` matters**
+
+Without `SKIP LOCKED`, workers contending for the same row would block until the lock holder commits. With `SKIP LOCKED`, a worker that cannot lock the next row immediately moves on to the next available job instead of waiting. That gives non-blocking, work-stealing behavior across many worker processes using only Postgres.
+
+**Concurrency guarantee**
+
+Each job should be claimed at most once per attempt. The automated test `test_concurrent_claiming_no_duplicates` seeds many jobs, runs concurrent claim operations from multiple workers, and asserts:
+
+- every job is claimed exactly once
+- no duplicate job IDs appear in claim results
+- each job has a single `job_claimed` event
+
+**Lease fields**
+
+`locked_by`, `locked_at`, and `lease_expires_at` record which worker owns a running job and for how long. Lease recovery for crashed workers is added in Week 3.
+
 ## Configuration
 
 Copy `.env.example` to `.env` and adjust as needed.
@@ -228,6 +304,9 @@ ReliQueue/
 │   ├── pytest.ini
 │   └── requirements.txt
 ├── docker-compose.yml
+├── scripts/
+│   ├── seed_jobs.py         # Submit demo jobs via API
+│   └── verify_queue.py      # Queue summary and duplicate-claim check
 ├── .env.example
 └── README.md
 ```
@@ -235,7 +314,7 @@ ReliQueue/
 ## Roadmap
 
 - [x] Week 1 — API foundation, schema, job lifecycle endpoints, tests
-- [ ] Week 2 — Worker engine and safe concurrent claiming
+- [x] Week 2 — Worker engine and safe concurrent claiming
 - [ ] Week 3 — Retries, dead-letter queue, lease recovery
 - [ ] Week 4 — Metrics, dashboard, demo scripts
 - [ ] Week 5 — CI, integration tests, documentation

@@ -17,7 +17,7 @@ async def run_worker(worker_id: str, queue_name: str, poll_interval: float) -> N
     stop_event = asyncio.Event()
 
     def handle_shutdown(signum: int, _frame: object) -> None:
-        logger.info("shutdown signal received", extra={"signal": signum, "worker_id": worker_id})
+        logger.info("[%s] shutdown signal received (signal=%s)", worker_id, signum)
         stop_event.set()
 
     signal.signal(signal.SIGINT, handle_shutdown)
@@ -27,14 +27,12 @@ async def run_worker(worker_id: str, queue_name: str, poll_interval: float) -> N
         await register_worker(db, worker_id, queue_name)
 
     logger.info(
-        "worker started",
-        extra={
-            "worker_id": worker_id,
-            "queue_name": queue_name,
-            "poll_interval": poll_interval,
-            "handlers": get_registered_job_types(),
-            "lease_seconds": settings.worker_lease_seconds,
-        },
+        "[%s] worker started queue=%s poll_interval=%ss handlers=%s lease_seconds=%s",
+        worker_id,
+        queue_name,
+        poll_interval,
+        get_registered_job_types(),
+        settings.worker_lease_seconds,
     )
 
     while not stop_event.is_set():
@@ -43,43 +41,42 @@ async def run_worker(worker_id: str, queue_name: str, poll_interval: float) -> N
             job = await claim_next_job(db, worker_id=worker_id, queue_name=queue_name)
 
         if job is None:
-            logger.info("no jobs available", extra={"worker_id": worker_id, "queue_name": queue_name})
+            logger.debug("[%s] no jobs available on queue=%s", worker_id, queue_name)
         else:
             handler = get_handler(job.job_type)
             logger.info(
-                "job claimed",
-                extra={
-                    "worker_id": worker_id,
-                    "queue_name": queue_name,
-                    "job_id": str(job.id),
-                    "job_type": job.job_type,
-                    "attempts": job.attempts,
-                    "handler": handler.__name__ if handler else None,
-                    "lease_expires_at": job.lease_expires_at.isoformat() if job.lease_expires_at else None,
-                },
+                "[%s] job claimed job_id=%s job_type=%s attempts=%s handler=%s lease_expires_at=%s",
+                worker_id,
+                job.id,
+                job.job_type,
+                job.attempts,
+                handler.__name__ if handler else None,
+                job.lease_expires_at.isoformat() if job.lease_expires_at else None,
             )
 
             if handler is None:
                 logger.warning(
-                    "no handler registered for claimed job",
-                    extra={
-                        "worker_id": worker_id,
-                        "job_id": str(job.id),
-                        "job_type": job.job_type,
-                    },
+                    "[%s] no handler registered for claimed job job_id=%s job_type=%s",
+                    worker_id,
+                    job.id,
+                    job.job_type,
                 )
             else:
                 try:
                     await execute_job(job)
                 except UnknownJobTypeError:
                     logger.warning(
-                        "unknown job type after claim",
-                        extra={"worker_id": worker_id, "job_id": str(job.id), "job_type": job.job_type},
+                        "[%s] unknown job type after claim job_id=%s job_type=%s",
+                        worker_id,
+                        job.id,
+                        job.job_type,
                     )
-                except Exception as exc:
+                except Exception:
                     logger.exception(
-                        "job handler failed",
-                        extra={"worker_id": worker_id, "job_id": str(job.id), "job_type": job.job_type},
+                        "[%s] job handler failed job_id=%s job_type=%s",
+                        worker_id,
+                        job.id,
+                        job.job_type,
                     )
                     # Failure handling is added on Day 15.
                 else:
@@ -87,13 +84,11 @@ async def run_worker(worker_id: str, queue_name: str, poll_interval: float) -> N
                         completed = await complete_job_success(db, job.id, worker_id)
                     if completed is not None:
                         logger.info(
-                            "job succeeded",
-                            extra={
-                                "worker_id": worker_id,
-                                "job_id": str(completed.id),
-                                "job_type": completed.job_type,
-                                "attempts": completed.attempts,
-                            },
+                            "[%s] job succeeded job_id=%s job_type=%s attempts=%s",
+                            worker_id,
+                            completed.id,
+                            completed.job_type,
+                            completed.attempts,
                         )
 
         try:
@@ -102,7 +97,7 @@ async def run_worker(worker_id: str, queue_name: str, poll_interval: float) -> N
             continue
 
     await engine.dispose()
-    logger.info("worker stopped", extra={"worker_id": worker_id})
+    logger.info("[%s] worker stopped", worker_id)
 
 
 def parse_args() -> argparse.Namespace:
@@ -118,11 +113,17 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> None:
+def configure_logging() -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
     )
+    if not settings.debug:
+        logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+
+
+def main() -> None:
+    configure_logging()
     args = parse_args()
     asyncio.run(
         run_worker(

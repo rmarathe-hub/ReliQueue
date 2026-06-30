@@ -95,3 +95,14 @@ async def test_sleep_job_runs_to_succeeded(db_session_factory, monkeypatch):
         JobEventType.JOB_CLAIMED,
         JobEventType.JOB_SUCCEEDED,
     ]
+
+
+@pytest.mark.asyncio
+async def test_complete_job_success_ignores_pending_job(db_session_factory):
+    async with db_session_factory() as db:
+        job = await create_pending_job(db)
+
+    async with db_session_factory() as db:
+        result = await complete_job_success(db, job.id, "worker-1")
+
+    assert result is None
