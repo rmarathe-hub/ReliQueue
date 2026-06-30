@@ -6,8 +6,9 @@ import signal
 from app.core.config import settings
 from app.db.session import async_session_factory, engine
 from app.services.job_claiming import claim_next_job
+from app.services.job_completion import complete_job_success
 from app.services.workers import register_worker, touch_worker_heartbeat
-from app.worker.handlers import get_handler, get_registered_job_types
+from app.worker.handlers import UnknownJobTypeError, execute_job, get_handler, get_registered_job_types
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,7 @@ async def run_worker(worker_id: str, queue_name: str, poll_interval: float) -> N
                     "lease_expires_at": job.lease_expires_at.isoformat() if job.lease_expires_at else None,
                 },
             )
+
             if handler is None:
                 logger.warning(
                     "no handler registered for claimed job",
@@ -66,6 +68,33 @@ async def run_worker(worker_id: str, queue_name: str, poll_interval: float) -> N
                         "job_type": job.job_type,
                     },
                 )
+            else:
+                try:
+                    await execute_job(job)
+                except UnknownJobTypeError:
+                    logger.warning(
+                        "unknown job type after claim",
+                        extra={"worker_id": worker_id, "job_id": str(job.id), "job_type": job.job_type},
+                    )
+                except Exception as exc:
+                    logger.exception(
+                        "job handler failed",
+                        extra={"worker_id": worker_id, "job_id": str(job.id), "job_type": job.job_type},
+                    )
+                    # Failure handling is added on Day 15.
+                else:
+                    async with async_session_factory() as db:
+                        completed = await complete_job_success(db, job.id, worker_id)
+                    if completed is not None:
+                        logger.info(
+                            "job succeeded",
+                            extra={
+                                "worker_id": worker_id,
+                                "job_id": str(completed.id),
+                                "job_type": completed.job_type,
+                                "attempts": completed.attempts,
+                            },
+                        )
 
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=poll_interval)

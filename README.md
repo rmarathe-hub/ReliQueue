@@ -185,7 +185,7 @@ Optional flags:
 python -m app.worker.runner --worker-id worker-1 --queue-name default --poll-interval 2
 ```
 
-The worker registers in the `workers` table, sends heartbeats, and claims pending jobs using Postgres `FOR UPDATE SKIP LOCKED`. Claimed jobs move to `running` with a worker lease. Handler execution and completion are added on Day 11+.
+The worker registers in the `workers` table, claims pending jobs using Postgres `FOR UPDATE SKIP LOCKED`, runs the matching handler, and marks successful jobs `succeeded`. Failure handling is added on Day 15.
 
 ### Supported demo job types
 
