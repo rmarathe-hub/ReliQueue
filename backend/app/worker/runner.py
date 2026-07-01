@@ -7,6 +7,7 @@ from app.core.config import settings
 from app.db.session import async_session_factory, engine
 from app.services.job_claiming import claim_next_job
 from app.services.job_completion import complete_job_success
+from app.services.job_failure import complete_job_failure
 from app.services.workers import register_worker, touch_worker_heartbeat
 from app.worker.handlers import UnknownJobTypeError, execute_job, get_handler, get_registered_job_types
 
@@ -61,24 +62,61 @@ async def run_worker(worker_id: str, queue_name: str, poll_interval: float) -> N
                     job.id,
                     job.job_type,
                 )
+                async with async_session_factory() as db:
+                    failed = await complete_job_failure(
+                        db,
+                        job.id,
+                        worker_id,
+                        f"No handler registered for job_type '{job.job_type}'",
+                    )
+                if failed is not None:
+                    logger.info(
+                        "[%s] job failed job_id=%s job_type=%s attempts=%s status=%s",
+                        worker_id,
+                        failed.id,
+                        failed.job_type,
+                        failed.attempts,
+                        failed.status.value,
+                    )
             else:
                 try:
                     await execute_job(job)
-                except UnknownJobTypeError:
+                except UnknownJobTypeError as exc:
                     logger.warning(
                         "[%s] unknown job type after claim job_id=%s job_type=%s",
                         worker_id,
                         job.id,
                         job.job_type,
                     )
-                except Exception:
+                    async with async_session_factory() as db:
+                        failed = await complete_job_failure(db, job.id, worker_id, str(exc))
+                    if failed is not None:
+                        logger.info(
+                            "[%s] job failed job_id=%s job_type=%s attempts=%s status=%s",
+                            worker_id,
+                            failed.id,
+                            failed.job_type,
+                            failed.attempts,
+                            failed.status.value,
+                        )
+                except Exception as exc:
                     logger.exception(
                         "[%s] job handler failed job_id=%s job_type=%s",
                         worker_id,
                         job.id,
                         job.job_type,
                     )
-                    # Failure handling is added on Day 15.
+                    async with async_session_factory() as db:
+                        failed = await complete_job_failure(db, job.id, worker_id, str(exc))
+                    if failed is not None:
+                        logger.info(
+                            "[%s] job failed job_id=%s job_type=%s attempts=%s status=%s",
+                            worker_id,
+                            failed.id,
+                            failed.job_type,
+                            failed.attempts,
+                            failed.status.value,
+                        )
                 else:
                     async with async_session_factory() as db:
                         completed = await complete_job_success(db, job.id, worker_id)
