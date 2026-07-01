@@ -1,4 +1,5 @@
 import pytest
+from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 
 from app.models.enums import JobEventType, JobStatus
@@ -11,8 +12,30 @@ from app.worker.handlers import execute_job
 from tests.test_worker_claiming import create_pending_job
 
 
+@pytest.fixture
+def no_retry_delay(monkeypatch):
+    def immediate_retry(now: datetime, attempts: int, **kwargs) -> datetime:
+        return now
+
+    monkeypatch.setattr("app.services.job_failure.calculate_retry_run_at", immediate_retry)
+
+
 @pytest.mark.asyncio
-async def test_complete_job_failure_schedules_retry_when_attempts_remain(db_session_factory):
+async def test_complete_job_failure_schedules_retry_when_attempts_remain(db_session_factory, monkeypatch):
+    fixed_now = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+    fixed_retry = datetime(2026, 1, 1, 12, 0, 5, tzinfo=UTC)
+
+    class FixedDateTime:
+        @classmethod
+        def now(cls, tz=None):
+            return fixed_now
+
+    monkeypatch.setattr("app.services.job_failure.datetime", FixedDateTime)
+    monkeypatch.setattr(
+        "app.services.job_failure.calculate_retry_run_at",
+        lambda now, attempts, **kwargs: fixed_retry,
+    )
+
     async with db_session_factory() as db:
         await register_worker(db, "worker-1", "default")
         job = await create_pending_job(db, max_attempts=3)
@@ -32,6 +55,21 @@ async def test_complete_job_failure_schedules_retry_when_attempts_remain(db_sess
     assert failed.locked_at is None
     assert failed.lease_expires_at is None
     assert failed.attempts == 1
+    assert failed.run_at == fixed_retry
+    assert failed.run_at > fixed_now
+
+    async with db_session_factory() as db:
+        result = await db.execute(
+            select(JobEvent).where(
+                JobEvent.job_id == job.id,
+                JobEvent.event_type == JobEventType.JOB_RETRY_SCHEDULED,
+            )
+        )
+        events = list(result.scalars().all())
+
+    assert len(events) == 1
+    assert events[0].payload["run_at"] == fixed_retry.isoformat()
+    assert events[0].payload["delay_seconds"] == 5.0
 
 
 @pytest.mark.asyncio
@@ -98,7 +136,32 @@ async def test_complete_job_failure_ignores_wrong_worker(db_session_factory):
 
 
 @pytest.mark.asyncio
-async def test_fail_always_dead_letters_after_max_attempts(db_session_factory):
+async def test_failed_job_not_claimed_before_retry_time(db_session_factory, monkeypatch):
+    future_retry = datetime.now(UTC) + timedelta(seconds=60)
+
+    monkeypatch.setattr(
+        "app.services.job_failure.calculate_retry_run_at",
+        lambda now, attempts, **kwargs: future_retry,
+    )
+
+    async with db_session_factory() as db:
+        await register_worker(db, "worker-1", "default")
+        await create_pending_job(db, max_attempts=3)
+
+    async with db_session_factory() as db:
+        claimed = await claim_next_job(db, worker_id="worker-1", queue_name="default")
+
+    async with db_session_factory() as db:
+        await complete_job_failure(db, claimed.id, "worker-1", "simulated failure")
+
+    async with db_session_factory() as db:
+        not_ready = await claim_next_job(db, worker_id="worker-1", queue_name="default")
+
+    assert not_ready is None
+
+
+@pytest.mark.asyncio
+async def test_fail_always_dead_letters_after_max_attempts(db_session_factory, no_retry_delay):
     async with db_session_factory() as db:
         await register_worker(db, "worker-1", "default")
         job = await create_pending_job(
@@ -135,7 +198,7 @@ async def test_fail_always_dead_letters_after_max_attempts(db_session_factory):
 
 
 @pytest.mark.asyncio
-async def test_fail_once_retries_then_succeeds(db_session_factory):
+async def test_fail_once_retries_then_succeeds(db_session_factory, no_retry_delay):
     async with db_session_factory() as db:
         await register_worker(db, "worker-1", "default")
         await create_pending_job(db, job_type="fail_once", max_attempts=3)
