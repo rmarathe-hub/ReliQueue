@@ -141,5 +141,5 @@ Ordered roadmap — each item is one step toward Celery/BullMQ-class ergonomics 
 ## Related docs
 
 - [README](../README.md) — setup, API, load test numbers  
-- [test_matrix.md](./test_matrix.md) — what the 453 tests cover  
+- [test_matrix.md](./test_matrix.md) — what the 458 tests cover  
 - [week5-week6-plan.md](./week5-week6-plan.md) — portfolio roadmap  

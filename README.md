@@ -6,6 +6,8 @@ A durable distributed job queue and task scheduler built with **FastAPI**, **Pos
 
 ReliQueue stores jobs in Postgres, exposes a REST API for submission and inspection, and runs Python workers that claim and execute jobs safely under concurrency. Failed jobs retry with exponential backoff, permanently failed jobs dead-letter, and a live dashboard surfaces queue health for demos and debugging.
 
+**Documentation:** [Design tradeoffs](docs/tradeoffs.md) (vs Celery/BullMQ) · [Test coverage matrix](docs/test_matrix.md) · [OpenAPI docs](http://localhost:8000/docs) (when API is running)
+
 ## What works today
 
 **Week 1 — API foundation**
@@ -15,7 +17,7 @@ ReliQueue stores jobs in Postgres, exposes a REST API for submission and inspect
 - Durable job schema (`jobs`, `job_events`, `workers`)
 - Job submission with idempotency keys
 - Job list, detail, and event timeline APIs
-- 453-test Postgres-backed pytest suite with documented markers (`reliability`, `slow`)
+- 458-test Postgres-backed pytest suite with documented markers (`reliability`, `slow`)
 
 **Week 2 — Worker engine**
 
@@ -40,23 +42,51 @@ ReliQueue stores jobs in Postgres, exposes a REST API for submission and inspect
 - One-command demo script (`scripts/run_demo.py`) for portfolio walkthroughs
 - Hands-off demo launcher (`scripts/demo_run.sh`) — Docker, migrations, workers, and full 35-job batch
 
+**Week 5 — CI and engineering credibility**
+
+- GitHub Actions CI on Postgres ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) — 450 fast tests + reliability slice on every push
+- [`scripts/load_test.py`](scripts/load_test.py) — 500 jobs / 5 workers, 0 duplicate claims (~9 jobs/sec locally)
+- Structured JSON worker logs (`event`, `worker_id`, `job_id`, `duration_ms`, `status`)
+- [`docs/tradeoffs.md`](docs/tradeoffs.md) — Postgres vs Redis/RabbitMQ, at-least-once guarantees, Celery/BullMQ comparison table
+
 ## Architecture
 
 ```mermaid
 flowchart TB
-    Client[API Client / Dashboard] --> API[FastAPI]
+    subgraph Clients
+        HTTP[HTTP clients / curl]
+        Scripts[scripts: demo, load_test, seed]
+        Dash[Dashboard /dashboard]
+    end
+
+    HTTP --> API[FastAPI API]
+    Scripts --> API
+    Dash --> API
+
     API --> DB[(Postgres)]
 
-    W1[Worker 1] --> DB
-    W2[Worker 2] --> DB
-    WN[Worker N] --> DB
+    subgraph Worker processes
+        W1[Worker 1]
+        W2[Worker 2]
+        WN[Worker N]
+    end
 
-    subgraph Postgres
+    W1 --> DB
+    W2 --> DB
+    WN --> DB
+
+    subgraph Postgres tables
         Jobs[jobs]
         Events[job_events]
-        Workers[workers]
+        WorkersTbl[workers]
     end
+
+    DB --- Jobs
+    DB --- Events
+    DB --- WorkersTbl
 ```
+
+**Claiming model:** workers poll Postgres and claim with `SELECT … FOR UPDATE SKIP LOCKED` inside a transaction — no Redis or RabbitMQ broker. See [How workers claim jobs](#how-workers-claim-jobs) and [tradeoffs.md](docs/tradeoffs.md).
 
 ### Worker execution loop
 
@@ -116,7 +146,7 @@ stateDiagram-v2
 ## Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/) and Docker Compose
-- Python 3.11+ (for local development and tests)
+- Python 3.12+ (for local development and tests; matches `backend/Dockerfile`)
 
 ## Quick start
 
@@ -243,19 +273,23 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 ## API reference
 
+Full interactive reference: [http://localhost:8000/docs](http://localhost:8000/docs) (Swagger UI) and [http://localhost:8000/redoc](http://localhost:8000/redoc).
+
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/health` | API and database health |
-| `POST` | `/api/jobs` | Submit a job |
-| `GET` | `/api/jobs` | List jobs (`status`, `queue_name`, `job_type`, `limit`, `offset`) |
-| `GET` | `/api/jobs/{job_id}` | Job detail |
-| `GET` | `/api/jobs/{job_id}/events` | Job event timeline |
-| `POST` | `/api/jobs/{job_id}/retry` | Manual retry (dead-lettered jobs) |
-| `POST` | `/api/jobs/{job_id}/cancel` | Cancel a pending job |
-| `GET` | `/api/workers` | List workers |
-| `GET` | `/api/workers/{worker_id}` | Worker detail |
-| `GET` | `/api/metrics` | Queue and worker snapshot metrics |
+| `POST` | `/api/jobs` | Submit a job (`201` new, `200` idempotent replay) |
+| `GET` | `/api/jobs` | List jobs — query: `status`, `queue_name`, `job_type`, `limit` (1–100), `offset` |
+| `GET` | `/api/jobs/{job_id}` | Job detail (lock fields, `last_error`, timestamps) |
+| `GET` | `/api/jobs/{job_id}/events` | Append-only event timeline |
+| `POST` | `/api/jobs/{job_id}/retry` | Manual retry — `dead_lettered` or `cancelled` → `pending` (`409` if not allowed) |
+| `POST` | `/api/jobs/{job_id}/cancel` | Cancel — `pending` only (`409` if running or terminal) |
+| `GET` | `/api/workers` | List workers — query: `status`, `queue_name`, `limit`, `offset` |
+| `GET` | `/api/workers/{worker_id}` | Worker detail (`current_job_id`, heartbeat) |
+| `GET` | `/api/metrics` | Queue depth, status counts, worker counts, hourly activity, avg runtime |
 | `GET` | `/dashboard` | Live HTML dashboard (auto-refreshes every 5s) |
+
+**Not exposed on create API:** `run_at` is set internally for retry backoff (see [tradeoffs.md](docs/tradeoffs.md#6-feature-comparison--reliqueue-vs-celery-vs-bullmq)).
 
 ### Job submission body
 
@@ -284,7 +318,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 ## Tests
 
-**453 Postgres-backed integration tests** across API validation, job state machine, worker claiming, retries/DLQ, lease recovery, metrics, dashboard, concurrency, and demo scripts. Full suite runs in ~30 seconds on a laptop.
+**458 Postgres-backed integration tests** across API validation, job state machine, worker claiming, retries/DLQ, lease recovery, metrics, dashboard, concurrency, and demo scripts. Full suite runs in ~30 seconds on a laptop.
 
 Requires Postgres (for example `docker compose up db`). Tests use a separate `reliqueue_test` database — created automatically if missing — run Alembic migrations once per session, and truncate tables between tests.
 
@@ -301,8 +335,8 @@ export TEST_DATABASE_URL=postgresql+asyncpg://reliqueue:reliqueue@localhost:5432
 
 | Command | Tests | Use when |
 |---------|-------|----------|
-| `pytest -v` | 453 (full suite) | Local validation before a commit or PR |
-| `pytest -m "not slow" -v` | 450 | **CI and fast feedback** — skips 3 stress/concurrency tests |
+| `pytest -v` | 458 (full suite) | Local validation before a commit or PR |
+| `pytest -m "not slow" -v` | 455 | **CI and fast feedback** — skips 3 stress/concurrency tests |
 | `pytest -m reliability -v` | 7 | Core retry, DLQ, lease, cancel, and event-timeline scenarios |
 | `pytest -m slow -v` | 3 | High-volume concurrency only (200-job / multi-queue stress) |
 
@@ -327,7 +361,7 @@ List registered markers: `pytest --markers`
 
 ### Coverage map
 
-See [`docs/test_matrix.md`](docs/test_matrix.md) for behavior-area → test-file mapping, intentional overlap notes, and remaining risk.
+See [`docs/test_matrix.md`](docs/test_matrix.md) for behavior-area → test-file mapping (458 tests), intentional overlap notes, and remaining risk.
 
 ### CI
 
@@ -337,22 +371,33 @@ On every push/PR to `main` ([`.github/workflows/ci.yml`](.github/workflows/ci.ym
 
 1. Postgres 16 service
 2. `alembic upgrade head`
-3. `pytest -m "not slow"` — 450 integration tests
+3. `pytest -m "not slow"` — 455 integration tests
 4. `pytest -m reliability` — 7 core retry/DLQ/lease scenarios
 
 **Slow tests** (3 concurrency stress tests) run on demand or weekly via [`.github/workflows/slow-tests.yml`](.github/workflows/slow-tests.yml) (`workflow_dispatch` or Mondays 06:00 UTC).
 
-Run the CI steps locally:
+#### Run CI locally
+
+Mirror the GitHub Actions job before pushing:
 
 ```bash
+# 1. Postgres
 docker compose up -d db
-cd backend && source .venv/bin/activate
+
+# 2. Backend venv + env
+cd backend
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
 export TEST_DATABASE_URL=postgresql+asyncpg://reliqueue:reliqueue@localhost:5432/reliqueue_test
 export DATABASE_URL="$TEST_DATABASE_URL"
+
+# 3. Migrations + same pytest commands as CI
 alembic upgrade head
 pytest -m "not slow" -v
 pytest -m reliability -v
 ```
+
+Optional: `pytest -m slow -v` for the 3 stress tests (also run weekly in Actions).
 
 ### Load test
 
@@ -584,9 +629,14 @@ ReliQueue/
 │   ├── pytest.ini
 │   └── requirements.txt
 ├── docker-compose.yml
+├── .github/
+│   └── workflows/
+│       ├── ci.yml           # Postgres CI on push/PR
+│       └── slow-tests.yml   # Weekly / manual stress tests
 ├── docs/
 │   ├── test_matrix.md       # Test coverage map
-│   └── tradeoffs.md         # Design tradeoffs vs Celery/BullMQ
+│   ├── tradeoffs.md         # Design tradeoffs vs Celery/BullMQ
+│   └── week5-week6-plan.md  # Portfolio roadmap
 ├── scripts/
 │   ├── demo_common.py       # Shared demo helpers (metrics, seed specs)
 │   ├── demo_run.sh          # Hands-off demo (Docker + workers + full batch)
@@ -598,14 +648,22 @@ ReliQueue/
 └── README.md
 ```
 
+## Further reading
+
+| Doc | Contents |
+|-----|----------|
+| [docs/tradeoffs.md](docs/tradeoffs.md) | Postgres vs Redis/RabbitMQ, at-least-once delivery, Celery/BullMQ feature table, parity roadmap |
+| [docs/test_matrix.md](docs/test_matrix.md) | 458 tests mapped to behavior areas, CI commands, overlap notes |
+| [docs/week5-week6-plan.md](docs/week5-week6-plan.md) | Week 5–6 portfolio checklist |
+
 ## Roadmap
 
 - [x] Week 1 — API foundation, schema, job lifecycle endpoints, tests
 - [x] Week 2 — Worker engine and safe concurrent claiming
 - [x] Week 3 — Retries, dead-letter queue, lease recovery
 - [x] Week 4 — Metrics, dashboard, demo scripts
-- [ ] Week 5 — CI, integration tests, documentation
-- [ ] Week 6 — Portfolio polish
+- [x] Week 5 — CI, load test, structured logging, tradeoffs documentation
+- [ ] Week 6 — Portfolio polish (screenshots, deploy, LinkedIn)
 
 ## License
 

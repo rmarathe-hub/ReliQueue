@@ -35,6 +35,8 @@ def test_readme_commands_reference_existing_files():
         "scripts/demo_run.sh",
         "scripts/seed_jobs.py",
         "scripts/verify_queue.py",
+        "scripts/load_test.py",
+        "docs/tradeoffs.md",
         "docker-compose.yml",
     ):
         assert path in readme

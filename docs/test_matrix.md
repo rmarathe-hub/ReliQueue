@@ -1,6 +1,6 @@
 # ReliQueue Test Coverage Matrix
 
-Last updated: Week 5 Day 34 (453 tests).
+Last updated: Week 5 Day 35 (458 tests).
 
 This matrix maps behavior areas to tests, gaps addressed in the latest expansion, and remaining risk. Priority: **critical**, **important**, **nice-to-have**.
 
@@ -10,8 +10,8 @@ This matrix maps behavior areas to tests, gaps addressed in the latest expansion
 
 | Command | Count | Purpose |
 |---------|-------|---------|
-| `pytest -v` | 453 | Full local validation |
-| `pytest -m "not slow" -v` | 450 | CI / fast feedback (excludes stress tests) |
+| `pytest -v` | 458 | Full local validation |
+| `pytest -m "not slow" -v` | 455 | CI / fast feedback (excludes stress tests) |
 | `pytest -m reliability -v` | 7 | Core reliability slice (`test_reliability.py`) |
 | `pytest -m slow -v` | 3 | Concurrency stress only |
 
@@ -41,7 +41,7 @@ Some behaviors are covered in more than one file on purpose:
 
 | Metric | Value |
 |--------|-------|
-| **Total tests** | 453 |
+| **Total tests** | 458 |
 | **Reliability (`-m reliability`)** | 7 |
 | **Slow (`-m slow`)** | 3 |
 | **Full suite runtime** | ~30s |
@@ -309,7 +309,7 @@ Some behaviors are covered in more than one file on purpose:
 | **CI readiness** | `test_ci_readiness.py` — markers, collect, migrations, `ci.yml` + `slow-tests.yml` workflows |
 | **Structured logging** | `app/worker/structured_log.py` — JSON worker lifecycle logs (`test_worker_structured_logging.py`) |
 | **Tradeoffs doc** | `docs/tradeoffs.md` — Postgres vs brokers, Celery/BullMQ table, parity roadmap (`test_tradeoffs_doc.py`) |
-| **README accuracy** | Checked in demo script tests |
+| **README accuracy** | `test_ci_safety.py`, `test_readme_engineering.py` — scripts, docs links, API table, CI snippet |
 
 ---
 
@@ -326,6 +326,7 @@ Some behaviors are covered in more than one file on purpose:
 | **Week 5 Day 31 CI hardening** | 440 |
 | **Week 5 Day 32 load test** | 445 |
 | **Week 5 Day 33 structured logging** | 449 |
-| **Week 5 Day 34 tradeoffs doc** | **453** |
+| **Week 5 Day 34 tradeoffs doc** | 453 |
+| **Week 5 Day 35 README engineering** | **458** |
 
 No shallow inflation — parametrized tests cover real API/service behaviors only.
