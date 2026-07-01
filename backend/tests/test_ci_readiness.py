@@ -91,3 +91,13 @@ def test_github_actions_ci_workflow_exists():
     assert "TEST_DATABASE_URL" in text
     assert "alembic upgrade head" in text
     assert 'pytest -m "not slow"' in text
+    assert "pytest -m reliability" in text
+
+
+def test_slow_tests_workflow_exists():
+    workflow = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "slow-tests.yml"
+    assert workflow.is_file()
+    text = workflow.read_text(encoding="utf-8")
+    assert "workflow_dispatch" in text
+    assert "schedule:" in text
+    assert "pytest -m slow" in text

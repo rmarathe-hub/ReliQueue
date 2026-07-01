@@ -1,13 +1,12 @@
-name: CI
+name: Slow tests
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1"
 
 jobs:
-  test:
+  slow:
     runs-on: ubuntu-latest
 
     services:
@@ -64,10 +63,6 @@ jobs:
         working-directory: backend
         run: alembic upgrade head
 
-      - name: Run integration tests
+      - name: Run slow concurrency tests
         working-directory: backend
-        run: pytest -m "not slow" -v --tb=short
-
-      - name: Run reliability suite
-        working-directory: backend
-        run: pytest -m reliability -v --tb=short
+        run: pytest -m slow -v --tb=short
