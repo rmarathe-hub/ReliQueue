@@ -12,6 +12,7 @@ from app.services.job_failure import complete_job_failure
 from app.services.job_lease_recovery import recover_expired_leases
 from app.services.workers import register_worker, touch_worker_heartbeat
 from app.worker.handlers import UnknownJobTypeError, execute_job, get_handler, get_registered_job_types
+from app.worker.structured_log import configure_worker_logging, emit
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +21,7 @@ async def run_worker(worker_id: str, queue_name: str, poll_interval: float) -> N
     stop_event = asyncio.Event()
 
     def handle_shutdown(signum: int, _frame: object) -> None:
-        logger.info("[%s] shutdown signal received (signal=%s)", worker_id, signum)
+        emit("shutdown_signal", worker_id=worker_id, signal=signum)
         stop_event.set()
 
     signal.signal(signal.SIGINT, handle_shutdown)
@@ -29,13 +30,13 @@ async def run_worker(worker_id: str, queue_name: str, poll_interval: float) -> N
     async with async_session_factory() as db:
         await register_worker(db, worker_id, queue_name)
 
-    logger.info(
-        "[%s] worker started queue=%s poll_interval=%ss handlers=%s lease_seconds=%s",
-        worker_id,
-        queue_name,
-        poll_interval,
-        get_registered_job_types(),
-        settings.worker_lease_seconds,
+    emit(
+        "worker_started",
+        worker_id=worker_id,
+        queue_name=queue_name,
+        poll_interval=poll_interval,
+        handlers=get_registered_job_types(),
+        lease_seconds=settings.worker_lease_seconds,
     )
 
     last_recovery_at = time.monotonic()
@@ -46,11 +47,11 @@ async def run_worker(worker_id: str, queue_name: str, poll_interval: float) -> N
             async with async_session_factory() as db:
                 recovered_jobs = await recover_expired_leases(db, queue_name=queue_name)
             if recovered_jobs:
-                logger.info(
-                    "[%s] recovered %s expired job lease(s) on queue=%s",
-                    worker_id,
-                    len(recovered_jobs),
-                    queue_name,
+                emit(
+                    "lease_recovered",
+                    worker_id=worker_id,
+                    queue_name=queue_name,
+                    recovered_count=len(recovered_jobs),
                 )
             last_recovery_at = now_mono
 
@@ -59,25 +60,28 @@ async def run_worker(worker_id: str, queue_name: str, poll_interval: float) -> N
             job = await claim_next_job(db, worker_id=worker_id, queue_name=queue_name)
 
         if job is None:
-            logger.debug("[%s] no jobs available on queue=%s", worker_id, queue_name)
+            logger.debug("no jobs available worker_id=%s queue_name=%s", worker_id, queue_name)
         else:
             handler = get_handler(job.job_type)
-            logger.info(
-                "[%s] job claimed job_id=%s job_type=%s attempts=%s handler=%s lease_expires_at=%s",
-                worker_id,
-                job.id,
-                job.job_type,
-                job.attempts,
-                handler.__name__ if handler else None,
-                job.lease_expires_at.isoformat() if job.lease_expires_at else None,
+            emit(
+                "job_claimed",
+                worker_id=worker_id,
+                job_id=job.id,
+                job_type=job.job_type,
+                attempts=job.attempts,
+                queue_name=queue_name,
+                status="running",
             )
 
+            execution_started = time.perf_counter()
+
             if handler is None:
-                logger.warning(
-                    "[%s] no handler registered for claimed job job_id=%s job_type=%s",
-                    worker_id,
-                    job.id,
-                    job.job_type,
+                emit(
+                    "handler_missing",
+                    worker_id=worker_id,
+                    job_id=job.id,
+                    job_type=job.job_type,
+                    attempts=job.attempts,
                 )
                 async with async_session_factory() as db:
                     failed = await complete_job_failure(
@@ -87,63 +91,66 @@ async def run_worker(worker_id: str, queue_name: str, poll_interval: float) -> N
                         f"No handler registered for job_type '{job.job_type}'",
                     )
                 if failed is not None:
-                    logger.info(
-                        "[%s] job failed job_id=%s job_type=%s attempts=%s status=%s",
-                        worker_id,
-                        failed.id,
-                        failed.job_type,
-                        failed.attempts,
-                        failed.status.value,
+                    emit(
+                        "job_failed",
+                        worker_id=worker_id,
+                        job_id=failed.id,
+                        job_type=failed.job_type,
+                        attempts=failed.attempts,
+                        status=failed.status.value,
+                        duration_ms=round((time.perf_counter() - execution_started) * 1000, 2),
+                        error=f"No handler registered for job_type '{job.job_type}'",
                     )
             else:
                 try:
                     await execute_job(job)
                 except UnknownJobTypeError as exc:
-                    logger.warning(
-                        "[%s] unknown job type after claim job_id=%s job_type=%s",
-                        worker_id,
-                        job.id,
-                        job.job_type,
-                    )
                     async with async_session_factory() as db:
                         failed = await complete_job_failure(db, job.id, worker_id, str(exc))
                     if failed is not None:
-                        logger.info(
-                            "[%s] job failed job_id=%s job_type=%s attempts=%s status=%s",
-                            worker_id,
-                            failed.id,
-                            failed.job_type,
-                            failed.attempts,
-                            failed.status.value,
+                        emit(
+                            "job_failed",
+                            worker_id=worker_id,
+                            job_id=failed.id,
+                            job_type=failed.job_type,
+                            attempts=failed.attempts,
+                            status=failed.status.value,
+                            duration_ms=round((time.perf_counter() - execution_started) * 1000, 2),
+                            error=str(exc),
                         )
                 except Exception as exc:
-                    logger.exception(
-                        "[%s] job handler failed job_id=%s job_type=%s",
-                        worker_id,
-                        job.id,
-                        job.job_type,
-                    )
+                    if settings.debug:
+                        logger.exception(
+                            "job handler failed worker_id=%s job_id=%s job_type=%s",
+                            worker_id,
+                            job.id,
+                            job.job_type,
+                        )
                     async with async_session_factory() as db:
                         failed = await complete_job_failure(db, job.id, worker_id, str(exc))
                     if failed is not None:
-                        logger.info(
-                            "[%s] job failed job_id=%s job_type=%s attempts=%s status=%s",
-                            worker_id,
-                            failed.id,
-                            failed.job_type,
-                            failed.attempts,
-                            failed.status.value,
+                        emit(
+                            "job_failed",
+                            worker_id=worker_id,
+                            job_id=failed.id,
+                            job_type=failed.job_type,
+                            attempts=failed.attempts,
+                            status=failed.status.value,
+                            duration_ms=round((time.perf_counter() - execution_started) * 1000, 2),
+                            error=str(exc),
                         )
                 else:
                     async with async_session_factory() as db:
                         completed = await complete_job_success(db, job.id, worker_id)
                     if completed is not None:
-                        logger.info(
-                            "[%s] job succeeded job_id=%s job_type=%s attempts=%s",
-                            worker_id,
-                            completed.id,
-                            completed.job_type,
-                            completed.attempts,
+                        emit(
+                            "job_succeeded",
+                            worker_id=worker_id,
+                            job_id=completed.id,
+                            job_type=completed.job_type,
+                            attempts=completed.attempts,
+                            status=completed.status.value,
+                            duration_ms=round((time.perf_counter() - execution_started) * 1000, 2),
                         )
 
         try:
@@ -152,7 +159,7 @@ async def run_worker(worker_id: str, queue_name: str, poll_interval: float) -> N
             continue
 
     await engine.dispose()
-    logger.info("[%s] worker stopped", worker_id)
+    emit("worker_stopped", worker_id=worker_id)
 
 
 def parse_args() -> argparse.Namespace:
@@ -169,12 +176,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def configure_logging() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s",
-    )
-    if not settings.debug:
-        logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+    configure_worker_logging()
 
 
 def main() -> None:

@@ -15,7 +15,7 @@ ReliQueue stores jobs in Postgres, exposes a REST API for submission and inspect
 - Durable job schema (`jobs`, `job_events`, `workers`)
 - Job submission with idempotency keys
 - Job list, detail, and event timeline APIs
-- 445-test Postgres-backed pytest suite with documented markers (`reliability`, `slow`)
+- 449-test Postgres-backed pytest suite with documented markers (`reliability`, `slow`)
 
 **Week 2 — Worker engine**
 
@@ -284,7 +284,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 ## Tests
 
-**445 Postgres-backed integration tests** across API validation, job state machine, worker claiming, retries/DLQ, lease recovery, metrics, dashboard, concurrency, and demo scripts. Full suite runs in ~30 seconds on a laptop.
+**449 Postgres-backed integration tests** across API validation, job state machine, worker claiming, retries/DLQ, lease recovery, metrics, dashboard, concurrency, and demo scripts. Full suite runs in ~30 seconds on a laptop.
 
 Requires Postgres (for example `docker compose up db`). Tests use a separate `reliqueue_test` database — created automatically if missing — run Alembic migrations once per session, and truncate tables between tests.
 
@@ -301,8 +301,8 @@ export TEST_DATABASE_URL=postgresql+asyncpg://reliqueue:reliqueue@localhost:5432
 
 | Command | Tests | Use when |
 |---------|-------|----------|
-| `pytest -v` | 445 (full suite) | Local validation before a commit or PR |
-| `pytest -m "not slow" -v` | 442 | **CI and fast feedback** — skips 3 stress/concurrency tests |
+| `pytest -v` | 449 (full suite) | Local validation before a commit or PR |
+| `pytest -m "not slow" -v` | 446 | **CI and fast feedback** — skips 3 stress/concurrency tests |
 | `pytest -m reliability -v` | 7 | Core retry, DLQ, lease, cancel, and event-timeline scenarios |
 | `pytest -m slow -v` | 3 | High-volume concurrency only (200-job / multi-queue stress) |
 
@@ -337,7 +337,7 @@ On every push/PR to `main` ([`.github/workflows/ci.yml`](.github/workflows/ci.ym
 
 1. Postgres 16 service
 2. `alembic upgrade head`
-3. `pytest -m "not slow"` — 442 integration tests
+3. `pytest -m "not slow"` — 446 integration tests
 4. `pytest -m reliability` — 7 core retry/DLQ/lease scenarios
 
 **Slow tests** (3 concurrency stress tests) run on demand or weekly via [`.github/workflows/slow-tests.yml`](.github/workflows/slow-tests.yml) (`workflow_dispatch` or Mondays 06:00 UTC).
@@ -400,6 +400,24 @@ python -m app.worker.runner --worker-id worker-1 --queue-name default --poll-int
 
 The worker registers in the `workers` table, claims pending jobs using Postgres `FOR UPDATE SKIP LOCKED`, runs the matching handler, and marks successful jobs `succeeded`.
 
+### Structured logs
+
+Workers emit **one JSON object per line** (logger: `reliqueue.worker`) for lifecycle events. Core fields: `event`, `worker_id`, `job_id`, `job_type`, `duration_ms`, `status`.
+
+```json
+{"timestamp":"2026-07-01T06:30:00.123456+00:00","event":"worker_started","worker_id":"worker-1","queue_name":"default","poll_interval":2.0,"handlers":["sleep","fail_once","fail_always","random_fail","generate_report"],"lease_seconds":60}
+{"timestamp":"2026-07-01T06:30:02.456789+00:00","event":"job_claimed","worker_id":"worker-1","job_id":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","job_type":"sleep","attempts":1,"queue_name":"default","status":"running"}
+{"timestamp":"2026-07-01T06:30:02.567890+00:00","event":"job_succeeded","worker_id":"worker-1","job_id":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","job_type":"sleep","attempts":1,"status":"succeeded","duration_ms":110.42}
+```
+
+Failed jobs include `error` and a terminal or retry `status` (`pending`, `dead_lettered`):
+
+```json
+{"timestamp":"2026-07-01T06:30:05.000000+00:00","event":"job_failed","worker_id":"worker-1","job_id":"b2c3d4e5-f6a7-8901-bcde-f12345678901","job_type":"fail_always","attempts":2,"status":"dead_lettered","duration_ms":4.8,"error":"simulated permanent failure"}
+```
+
+Other events: `lease_recovered`, `worker_stopped`, `shutdown_signal`.
+
 ### Supported demo job types
 
 | `job_type` | Behavior |
@@ -428,7 +446,7 @@ Seed 20 short sleep jobs (from repo root, with the backend venv activated):
 python scripts/seed_jobs.py --count 20 --job-type sleep
 ```
 
-Worker logs include the worker ID in each line, for example `[worker-2] job claimed job_id=...`.
+Worker stdout is JSON — pipe to `jq` for pretty printing, for example: `python -m app.worker.runner --worker-id worker-1 | jq`.
 
 Verify all jobs completed and no job was claimed twice:
 
@@ -558,7 +576,7 @@ ReliQueue/
 │   │   ├── schemas/         # Pydantic models
 │   │   ├── services/        # Business logic
 │   │   ├── static/          # Dashboard HTML
-│   │   ├── worker/          # Worker runner CLI
+│   │   ├── worker/          # Worker runner CLI + structured JSON logs
 │   │   └── main.py
 │   ├── alembic/             # Migrations
 │   ├── tests/               # Pytest suite
