@@ -88,8 +88,8 @@ def test_verify_claims_detects_duplicate_job_claimed_events():
                 def json(self):
                     if path.endswith("/events"):
                         return [
-                            {"event_type": "job_claimed", "payload": {"worker_id": "w1"}},
-                            {"event_type": "job_claimed", "payload": {"worker_id": "w2"}},
+                            {"event_type": "job_claimed", "payload": {"worker_id": "w1", "attempts": 1}},
+                            {"event_type": "job_claimed", "payload": {"worker_id": "w2", "attempts": 1}},
                         ]
                     return {}
 
@@ -99,6 +99,28 @@ def test_verify_claims_detects_duplicate_job_claimed_events():
     assert duplicates == ["job-1"]
     assert claims["w1"] == 1
     assert claims["w2"] == 1
+
+
+def test_verify_claims_allows_retry_claims_on_different_attempts():
+    class FakeClient:
+        def get(self, path: str):
+            class Response:
+                def raise_for_status(self):
+                    return None
+
+                def json(self):
+                    if path.endswith("/events"):
+                        return [
+                            {"event_type": "job_claimed", "payload": {"worker_id": "w1", "attempts": 1}},
+                            {"event_type": "job_failed", "payload": {}},
+                            {"event_type": "job_claimed", "payload": {"worker_id": "w1", "attempts": 2}},
+                        ]
+                    return {}
+
+            return Response()
+
+    duplicates, _ = verify_claims(FakeClient(), [{"id": "job-1"}])
+    assert duplicates == []
 
 
 def test_format_metrics_summary_handles_empty_queue_depth():

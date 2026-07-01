@@ -1,4 +1,14 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def normalize_async_database_url(url: str) -> str:
+    """Accept Railway/Heroku-style postgres:// URLs for async SQLAlchemy."""
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+asyncpg://", 1)
+    if url.startswith("postgresql://") and "+asyncpg" not in url and "+psycopg" not in url:
+        return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    return url
 
 
 class Settings(BaseSettings):
@@ -16,6 +26,11 @@ class Settings(BaseSettings):
     retry_base_delay_seconds: float = 1.0
     retry_max_delay_seconds: float = 300.0
     retry_jitter_enabled: bool = True
+
+    @field_validator("database_url", "test_database_url")
+    @classmethod
+    def normalize_database_urls(cls, value: str) -> str:
+        return normalize_async_database_url(value)
 
 
 settings = Settings()

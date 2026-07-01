@@ -1,6 +1,6 @@
 # ReliQueue Test Coverage Matrix
 
-Last updated: Week 5 Day 35 (458 tests).
+Last updated: Week 5 Day 36 + deploy/audit (467 tests).
 
 This matrix maps behavior areas to tests, gaps addressed in the latest expansion, and remaining risk. Priority: **critical**, **important**, **nice-to-have**.
 
@@ -10,8 +10,8 @@ This matrix maps behavior areas to tests, gaps addressed in the latest expansion
 
 | Command | Count | Purpose |
 |---------|-------|---------|
-| `pytest -v` | 458 | Full local validation |
-| `pytest -m "not slow" -v` | 455 | CI / fast feedback (excludes stress tests) |
+| `pytest -v` | 467 | Full local validation |
+| `pytest -m "not slow" -v` | 464 | CI / fast feedback (excludes stress tests) |
 | `pytest -m reliability -v` | 7 | Core reliability slice (`test_reliability.py`) |
 | `pytest -m slow -v` | 3 | Concurrency stress only |
 
@@ -41,7 +41,7 @@ Some behaviors are covered in more than one file on purpose:
 
 | Metric | Value |
 |--------|-------|
-| **Total tests** | 458 |
+| **Total tests** | 467 |
 | **Reliability (`-m reliability`)** | 7 |
 | **Slow (`-m slow`)** | 3 |
 | **Full suite runtime** | ~30s |
@@ -327,6 +327,7 @@ Some behaviors are covered in more than one file on purpose:
 | **Week 5 Day 32 load test** | 445 |
 | **Week 5 Day 33 structured logging** | 449 |
 | **Week 5 Day 34 tradeoffs doc** | 453 |
-| **Week 5 Day 35 README engineering** | **458** |
+| **Week 5 Day 35 README engineering** | 458 |
+| **Week 5 Day 36 capstone + deploy** | **467** |
 
 No shallow inflation — parametrized tests cover real API/service behaviors only.

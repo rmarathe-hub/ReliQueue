@@ -86,11 +86,12 @@ Include all of the following:
 
 ### Week 5 done when
 
-- [ ] CI green on GitHub  
-- [ ] README has **real** load test numbers  
-- [ ] `docs/tradeoffs.md` with **comparison table + parity roadmap**  
-- [ ] Structured worker logs  
-- [ ] `pytest` marker commands documented  
+- [x] CI green on GitHub  
+- [x] README has **real** load test numbers  
+- [x] `docs/tradeoffs.md` with **comparison table + parity roadmap**  
+- [x] Structured worker logs  
+- [x] `pytest` marker commands documented  
+- [x] `scripts/capstone.sh` validates full local pipeline  
 
 ---
 
@@ -118,8 +119,10 @@ Include all of the following:
 - [ ] README opens with **why** + link to tradeoffs  
 - [ ] Screenshots + demo GIF/link  
 - [ ] Resume bullet drafted  
-- [ ] (Optional) Live demo URL  
+- [x] (Optional) Deploy guide + Railway config — [`docs/deploy.md`](deploy.md)  
+- [ ] Live demo URL in README (after `railway up`)  
 - [ ] Repo pinned + LinkedIn post  
+- [x] `scripts/final_audit.sh` — doc links + CI-equivalent tests  
 - [ ] Can walk through **comparison table + parity roadmap** in an interview  
 
 ---

@@ -46,7 +46,7 @@ def wait_for_queue_idle(
     return fetch_metrics(client).get("jobs_by_status", {})
 
 
-def run_verify(api_base_url: str) -> int:
+def run_verify(api_base_url: str, prefix: str | None = None) -> int:
     command = [
         sys.executable,
         str(VERIFY_SCRIPT),
@@ -54,6 +54,8 @@ def run_verify(api_base_url: str) -> int:
         api_base_url,
         "--show-metrics",
     ]
+    if prefix is not None:
+        command.extend(["--prefix", prefix])
     result = subprocess.run(command, check=False)
     return result.returncode
 
@@ -158,7 +160,7 @@ def main() -> int:
     if args.skip_verify or args.no_wait:
         return 0
 
-    return run_verify(args.api_base_url)
+    return run_verify(args.api_base_url, prefix=args.prefix)
 
 
 if __name__ == "__main__":

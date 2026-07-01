@@ -6,7 +6,12 @@ A durable distributed job queue and task scheduler built with **FastAPI**, **Pos
 
 ReliQueue stores jobs in Postgres, exposes a REST API for submission and inspection, and runs Python workers that claim and execute jobs safely under concurrency. Failed jobs retry with exponential backoff, permanently failed jobs dead-letter, and a live dashboard surfaces queue health for demos and debugging.
 
-**Documentation:** [Design tradeoffs](docs/tradeoffs.md) (vs Celery/BullMQ) · [Test coverage matrix](docs/test_matrix.md) · [OpenAPI docs](http://localhost:8000/docs) (when API is running)
+**Documentation:** [Design tradeoffs](docs/tradeoffs.md) (vs Celery/BullMQ) · [Test coverage matrix](docs/test_matrix.md) · [Deploy guide](docs/deploy.md) · [OpenAPI docs](http://localhost:8000/docs) (when API is running)
+
+**Live demo:** deploy to [Railway](docs/deploy.md#railway-recommended) and set your URL below, or run locally with `docker compose up` → [http://localhost:8000/dashboard](http://localhost:8000/dashboard)
+
+<!-- After Railway deploy, replace with your public URL -->
+<!-- **Production:** https://YOUR-APP.up.railway.app/dashboard -->
 
 ## What works today
 
@@ -17,7 +22,7 @@ ReliQueue stores jobs in Postgres, exposes a REST API for submission and inspect
 - Durable job schema (`jobs`, `job_events`, `workers`)
 - Job submission with idempotency keys
 - Job list, detail, and event timeline APIs
-- 458-test Postgres-backed pytest suite with documented markers (`reliability`, `slow`)
+- 467-test Postgres-backed pytest suite with documented markers (`reliability`, `slow`)
 
 **Week 2 — Worker engine**
 
@@ -44,10 +49,16 @@ ReliQueue stores jobs in Postgres, exposes a REST API for submission and inspect
 
 **Week 5 — CI and engineering credibility**
 
-- GitHub Actions CI on Postgres ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) — 450 fast tests + reliability slice on every push
+- GitHub Actions CI on Postgres ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) — 464 fast tests + reliability slice on every push
 - [`scripts/load_test.py`](scripts/load_test.py) — 500 jobs / 5 workers, 0 duplicate claims (~9 jobs/sec locally)
 - Structured JSON worker logs (`event`, `worker_id`, `job_id`, `duration_ms`, `status`)
 - [`docs/tradeoffs.md`](docs/tradeoffs.md) — Postgres vs Redis/RabbitMQ, at-least-once guarantees, Celery/BullMQ comparison table
+
+**Week 6 — Deploy (partial)**
+
+- [`docs/deploy.md`](docs/deploy.md) — Railway (recommended) + Fly.io alternative
+- `railway.toml` + production `entrypoint.sh` (migrate on boot, `DEBUG=false`)
+- `scripts/final_audit.sh` — doc links, CI-equivalent tests, optional API smoke
 
 ## Architecture
 
@@ -318,7 +329,7 @@ Full interactive reference: [http://localhost:8000/docs](http://localhost:8000/d
 
 ## Tests
 
-**458 Postgres-backed integration tests** across API validation, job state machine, worker claiming, retries/DLQ, lease recovery, metrics, dashboard, concurrency, and demo scripts. Full suite runs in ~30 seconds on a laptop.
+**467 Postgres-backed integration tests** across API validation, job state machine, worker claiming, retries/DLQ, lease recovery, metrics, dashboard, concurrency, and demo scripts. Full suite runs in ~30 seconds on a laptop.
 
 Requires Postgres (for example `docker compose up db`). Tests use a separate `reliqueue_test` database — created automatically if missing — run Alembic migrations once per session, and truncate tables between tests.
 
@@ -335,8 +346,8 @@ export TEST_DATABASE_URL=postgresql+asyncpg://reliqueue:reliqueue@localhost:5432
 
 | Command | Tests | Use when |
 |---------|-------|----------|
-| `pytest -v` | 458 (full suite) | Local validation before a commit or PR |
-| `pytest -m "not slow" -v` | 455 | **CI and fast feedback** — skips 3 stress/concurrency tests |
+| `pytest -v` | 467 (full suite) | Local validation before a commit or PR |
+| `pytest -m "not slow" -v` | 464 | **CI and fast feedback** — skips 3 stress/concurrency tests |
 | `pytest -m reliability -v` | 7 | Core retry, DLQ, lease, cancel, and event-timeline scenarios |
 | `pytest -m slow -v` | 3 | High-volume concurrency only (200-job / multi-queue stress) |
 
@@ -361,7 +372,7 @@ List registered markers: `pytest --markers`
 
 ### Coverage map
 
-See [`docs/test_matrix.md`](docs/test_matrix.md) for behavior-area → test-file mapping (458 tests), intentional overlap notes, and remaining risk.
+See [`docs/test_matrix.md`](docs/test_matrix.md) for behavior-area → test-file mapping (467 tests), intentional overlap notes, and remaining risk.
 
 ### CI
 
@@ -371,7 +382,7 @@ On every push/PR to `main` ([`.github/workflows/ci.yml`](.github/workflows/ci.ym
 
 1. Postgres 16 service
 2. `alembic upgrade head`
-3. `pytest -m "not slow"` — 455 integration tests
+3. `pytest -m "not slow"` — 464 integration tests
 4. `pytest -m reliability` — 7 core retry/DLQ/lease scenarios
 
 **Slow tests** (3 concurrency stress tests) run on demand or weekly via [`.github/workflows/slow-tests.yml`](.github/workflows/slow-tests.yml) (`workflow_dispatch` or Mondays 06:00 UTC).
@@ -426,6 +437,29 @@ Measured locally (Docker Compose on macOS, Postgres 16, API + 5 worker processes
 | Outcomes | 500 succeeded, 0 failed, 0 dead-lettered |
 
 Resume-ready line: *500 jobs / 5 workers, 0 duplicate claims, ~9 jobs/sec (Postgres `SKIP LOCKED`, local Docker).*
+
+### Week 5 capstone
+
+Validate the full pipeline locally (Docker → demo → load test → pytest):
+
+```bash
+./scripts/capstone.sh
+```
+
+Options: `--skip-docker`, `--skip-demo`, `--skip-load`, `--load-jobs 100` for faster runs.
+
+## Deploy
+
+Host the API + dashboard on Railway (Postgres plugin + Docker). Workers can run locally against production Postgres for demos.
+
+See **[docs/deploy.md](docs/deploy.md)** for step-by-step Railway/Fly instructions, env vars (`DEBUG=false`, `DATABASE_URL`), and smoke tests (`/health`, `/dashboard`).
+
+```bash
+# After deploy
+curl -sf https://YOUR-APP.up.railway.app/health
+```
+
+**Day 42 hardening:** never commit `.env`; use platform secrets; set `DEBUG=false` in production (see deploy guide checklist).
 
 ## Workers
 
@@ -602,7 +636,8 @@ Copy `.env.example` to `.env` and adjust as needed.
 |----------|-------------|
 | `DATABASE_URL` | Async Postgres URL for the API |
 | `TEST_DATABASE_URL` | Postgres URL used by pytest |
-| `DEBUG` | Enable FastAPI debug mode |
+| `DEBUG` | Enable FastAPI debug mode (`false` in production) |
+| `APP_ENV` | `development` or `production` |
 | `WORKER_LEASE_SECONDS` | Worker lease duration for claimed jobs |
 | `WORKER_RECOVERY_INTERVAL_SECONDS` | How often workers scan for expired leases |
 | `RETRY_BASE_DELAY_SECONDS` | Base delay for exponential backoff |
@@ -625,6 +660,8 @@ ReliQueue/
 │   │   └── main.py
 │   ├── alembic/             # Migrations
 │   ├── tests/               # Pytest suite
+│   ├── entrypoint.sh        # Production: alembic migrate + uvicorn
+│   ├── fly.toml             # Optional Fly.io deploy config
 │   ├── Dockerfile
 │   ├── pytest.ini
 │   └── requirements.txt
@@ -634,12 +671,16 @@ ReliQueue/
 │       ├── ci.yml           # Postgres CI on push/PR
 │       └── slow-tests.yml   # Weekly / manual stress tests
 ├── docs/
+│   ├── deploy.md            # Railway / Fly deploy guide
 │   ├── test_matrix.md       # Test coverage map
 │   ├── tradeoffs.md         # Design tradeoffs vs Celery/BullMQ
 │   └── week5-week6-plan.md  # Portfolio roadmap
+├── railway.toml             # Railway deploy config
 ├── scripts/
+│   ├── capstone.sh          # Week 5 validation pipeline
 │   ├── demo_common.py       # Shared demo helpers (metrics, seed specs)
 │   ├── demo_run.sh          # Hands-off demo (Docker + workers + full batch)
+│   ├── final_audit.sh       # Day 44 doc + test audit
 │   ├── load_test.py         # API load test (throughput + duplicate-claim check)
 │   ├── run_demo.py          # End-to-end portfolio demo via API
 │   ├── seed_jobs.py         # Submit demo jobs via API
@@ -653,7 +694,8 @@ ReliQueue/
 | Doc | Contents |
 |-----|----------|
 | [docs/tradeoffs.md](docs/tradeoffs.md) | Postgres vs Redis/RabbitMQ, at-least-once delivery, Celery/BullMQ feature table, parity roadmap |
-| [docs/test_matrix.md](docs/test_matrix.md) | 458 tests mapped to behavior areas, CI commands, overlap notes |
+| [docs/deploy.md](docs/deploy.md) | Railway/Fly deploy, production env, worker notes, security checklist |
+| [docs/test_matrix.md](docs/test_matrix.md) | 467+ tests mapped to behavior areas, CI commands, overlap notes |
 | [docs/week5-week6-plan.md](docs/week5-week6-plan.md) | Week 5–6 portfolio checklist |
 
 ## Roadmap
@@ -662,8 +704,17 @@ ReliQueue/
 - [x] Week 2 — Worker engine and safe concurrent claiming
 - [x] Week 3 — Retries, dead-letter queue, lease recovery
 - [x] Week 4 — Metrics, dashboard, demo scripts
-- [x] Week 5 — CI, load test, structured logging, tradeoffs documentation
-- [ ] Week 6 — Portfolio polish (screenshots, deploy, LinkedIn)
+- [x] Week 5 — CI, load test, structured logging, tradeoffs, capstone (`scripts/capstone.sh`)
+- [x] Week 6 (partial) — Deploy guide + Railway config, final audit (`scripts/final_audit.sh`)
+- [ ] Week 6 (remaining) — README “why”, screenshots, demo GIF, LinkedIn post (Days 37–40, 43)
+
+### Final audit
+
+```bash
+./scripts/final_audit.sh
+```
+
+Checks doc links, CI-equivalent pytest, and optional live `/health` + `/dashboard` smoke when the API is running.
 
 ## License
 

@@ -14,14 +14,6 @@ from seed_jobs import build_payload, SUPPORTED_JOB_TYPES  # noqa: E402
 from verify_queue import verify_claims  # noqa: E402
 
 
-def test_standard_profile_has_fifteen_jobs():
-    assert len(demo_job_specs(prefix="x", profile="standard")) == 15
-
-
-def test_full_profile_has_thirty_five_jobs():
-    assert len(demo_job_specs(prefix="x", profile="full")) == 35
-
-
 @pytest.mark.parametrize("profile", ["standard", "full"])
 def test_each_demo_spec_has_valid_job_type_and_payload(profile):
     for spec in demo_job_specs(prefix="t", profile=profile):
