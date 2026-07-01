@@ -36,6 +36,7 @@ ReliQueue stores jobs in Postgres, exposes a REST API for submission and inspect
 - `GET /api/metrics` — queue depth, status counts, worker counts, recent activity
 - Live HTML dashboard at `/dashboard` with metrics, job drill-down, and worker health
 - One-command demo script (`scripts/run_demo.py`) for portfolio walkthroughs
+- Hands-off demo launcher (`scripts/demo_run.sh`) — Docker, migrations, workers, and full 35-job batch
 
 ## Architecture
 
@@ -358,7 +359,27 @@ The verify script prints status counts, claims per worker, and fails if any job 
 
 ### One-command portfolio demo
 
-With API and Postgres running (`docker compose up`), start at least one worker:
+**Fully hands-off (Day 27)** — starts Docker, migrates, spawns workers, seeds 35 jobs, waits, and verifies:
+
+```bash
+# Requires backend venv: cd backend && python -m venv .venv && pip install -r requirements.txt
+./scripts/demo_run.sh
+```
+
+Useful flags:
+
+```bash
+# Stack already running; only seed + wait + verify
+./scripts/demo_run.sh --no-docker
+
+# Leave workers running for dashboard exploration
+./scripts/demo_run.sh --keep-workers
+
+# Smaller 15-job batch instead of the full 35-job mix
+./scripts/demo_run.sh --profile standard
+```
+
+**API-only demo** — if Docker and workers are already running:
 
 ```bash
 cd backend
@@ -372,13 +393,24 @@ From another terminal (repo root, backend venv activated):
 python scripts/run_demo.py
 ```
 
+`run_demo.py` uses the **standard** profile (15 jobs) by default. For the original Day 27 mix:
+
+```bash
+python scripts/run_demo.py --profile full
+```
+
 This script:
 
 1. Checks API health
-2. Seeds a mixed batch (10 `sleep`, 3 `fail_once`, 2 `fail_always`)
+2. Seeds a mixed batch (profile-dependent)
 3. Polls `/api/metrics` until the queue is idle (`pending=0`, `running=0`)
 4. Runs duplicate-claim verification via `verify_queue.py`
 5. Prints the dashboard URL: `http://localhost:8000/dashboard`
+
+| Profile | Job mix |
+|---------|---------|
+| `standard` (default) | 10 `sleep`, 3 `fail_once`, 2 `fail_always` |
+| `full` | 20 `sleep`, 10 `random_fail`, 5 `fail_always` |
 
 Useful flags:
 
@@ -457,7 +489,8 @@ ReliQueue/
 │   └── test_matrix.md       # Test coverage map
 ├── scripts/
 │   ├── demo_common.py       # Shared demo helpers (metrics, seed specs)
-│   ├── run_demo.py          # End-to-end portfolio demo
+│   ├── demo_run.sh          # Hands-off demo (Docker + workers + full batch)
+│   ├── run_demo.py          # End-to-end portfolio demo via API
 │   ├── seed_jobs.py         # Submit demo jobs via API
 │   └── verify_queue.py      # Queue summary and duplicate-claim check
 ├── .env.example
