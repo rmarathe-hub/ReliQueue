@@ -59,6 +59,7 @@
     }
 
     .status-dot.error { background: var(--dead); }
+    .status-dot.warn { background: var(--pending); }
 
     main { padding: 1.5rem; max-width: 1400px; margin: 0 auto; }
 
@@ -127,6 +128,10 @@
 
     tr:last-child td { border-bottom: none; }
 
+    tr.clickable { cursor: pointer; }
+    tr.clickable:hover td { background: rgba(59, 130, 246, 0.08); }
+    tr.selected td { background: rgba(59, 130, 246, 0.15); }
+
     .badge {
       display: inline-block;
       padding: 0.125rem 0.5rem;
@@ -143,6 +148,8 @@
     .badge.cancelled { background: rgba(107, 114, 128, 0.2); color: var(--cancelled); }
     .badge.online { background: rgba(16, 185, 129, 0.2); color: var(--succeeded); }
     .badge.offline { background: rgba(107, 114, 128, 0.2); color: var(--cancelled); }
+    .badge.healthy { background: rgba(16, 185, 129, 0.2); color: var(--succeeded); }
+    .badge.stale { background: rgba(245, 158, 11, 0.2); color: var(--pending); }
 
     .mono { font-family: ui-monospace, monospace; font-size: 0.8125rem; }
 
@@ -166,6 +173,66 @@
       border-radius: 6px;
       padding: 0.375rem 0.75rem;
       font-size: 0.875rem;
+    }
+
+    .detail-panel {
+      border-top: 1px solid var(--border);
+      padding: 1rem;
+      background: var(--bg);
+    }
+
+    .detail-panel h3 {
+      font-size: 0.8125rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      margin-bottom: 0.75rem;
+    }
+
+    .detail-panel.empty-hint {
+      color: var(--muted);
+      font-size: 0.875rem;
+      text-align: center;
+      padding: 1.5rem;
+    }
+
+    .kv-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 0.75rem 1rem;
+      margin-bottom: 1rem;
+      font-size: 0.875rem;
+    }
+
+    .kv-grid dt { color: var(--muted); font-size: 0.75rem; text-transform: uppercase; }
+    .kv-grid dd { margin-top: 0.125rem; word-break: break-word; }
+
+    .payload-pre {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.75rem;
+      font-family: ui-monospace, monospace;
+      font-size: 0.75rem;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      margin-bottom: 1rem;
+    }
+
+    .error-text { color: #fca5a5; font-size: 0.875rem; margin-bottom: 1rem; }
+
+    .timeline-table td:first-child { white-space: nowrap; color: var(--muted); }
+    .timeline-table td:nth-child(2) { font-weight: 500; }
+
+    .link-btn {
+      background: none;
+      border: none;
+      color: var(--accent);
+      cursor: pointer;
+      font-family: inherit;
+      font-size: inherit;
+      padding: 0;
+      text-decoration: underline;
     }
   </style>
 </head>
@@ -191,18 +258,24 @@
 
     <div class="grid-2" style="margin-top: 1.5rem;">
       <section>
-        <h2>Recent jobs</h2>
+        <h2>Recent jobs <span style="font-weight:400;text-transform:none;letter-spacing:0">— click a row for detail</span></h2>
         <div id="jobs-table-wrap"></div>
+        <div id="job-detail-panel" class="detail-panel empty-hint">Select a job to view payload, errors, and event timeline.</div>
       </section>
       <section>
-        <h2>Workers</h2>
+        <h2>Workers <span style="font-weight:400;text-transform:none;letter-spacing:0">— click a row for health</span></h2>
         <div id="workers-table-wrap"></div>
+        <div id="worker-detail-panel" class="detail-panel empty-hint">Select a worker to view heartbeat health and current job.</div>
       </section>
     </div>
   </main>
 
   <script>
     const REFRESH_MS = 5000;
+    const HEARTBEAT_STALE_SECONDS = 10;
+
+    let selectedJobId = null;
+    let selectedWorkerId = null;
 
     function badge(status) {
       const cls = status.replace(/ /g, "_");
@@ -214,9 +287,55 @@
       return new Date(iso).toLocaleString();
     }
 
+    function fmtAgo(iso) {
+      if (!iso) return "—";
+      const seconds = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+      if (seconds < 60) return `${seconds}s ago`;
+      const minutes = Math.floor(seconds / 60);
+      if (minutes < 60) return `${minutes}m ago`;
+      const hours = Math.floor(minutes / 60);
+      return `${hours}h ago`;
+    }
+
     function shortId(id) {
       if (!id) return "—";
       return id.slice(0, 8) + "…";
+    }
+
+    function runtimeSeconds(job) {
+      if (!job.started_at || !job.completed_at) return null;
+      const ms = new Date(job.completed_at) - new Date(job.started_at);
+      return (ms / 1000).toFixed(2);
+    }
+
+    function heartbeatHealth(worker) {
+      if (worker.status === "offline") {
+        return { label: "offline", badge: "offline", dotClass: "error" };
+      }
+      if (!worker.last_heartbeat_at) {
+        return { label: "no heartbeat", badge: "stale", dotClass: "warn" };
+      }
+      const ageSeconds = (Date.now() - new Date(worker.last_heartbeat_at).getTime()) / 1000;
+      if (ageSeconds <= HEARTBEAT_STALE_SECONDS) {
+        return { label: "healthy", badge: "healthy", dotClass: "" };
+      }
+      return { label: "stale heartbeat", badge: "stale", dotClass: "warn" };
+    }
+
+    function selectJob(jobId) {
+      selectedJobId = jobId;
+      loadJobDetail(jobId);
+      document.querySelectorAll("#jobs-table-wrap tr.clickable").forEach(row => {
+        row.classList.toggle("selected", row.dataset.jobId === jobId);
+      });
+    }
+
+    function selectWorker(workerId) {
+      selectedWorkerId = workerId;
+      loadWorkerDetail(workerId);
+      document.querySelectorAll("#workers-table-wrap tr.clickable").forEach(row => {
+        row.classList.toggle("selected", row.dataset.workerId === workerId);
+      });
     }
 
     function renderCards(metrics) {
@@ -266,7 +385,8 @@
         <thead><tr>
           <th>ID</th><th>Type</th><th>Status</th><th>Queue</th><th>Attempts</th><th>Created</th>
         </tr></thead>
-        <tbody>${items.map(j => `<tr>
+        <tbody>${items.map(j => `<tr class="clickable${selectedJobId === j.id ? " selected" : ""}"
+          data-job-id="${j.id}">
           <td class="mono" title="${j.id}">${shortId(j.id)}</td>
           <td>${j.job_type}</td>
           <td>${badge(j.status)}</td>
@@ -275,6 +395,10 @@
           <td>${fmtTime(j.created_at)}</td>
         </tr>`).join("")}</tbody>
       </table>`;
+
+      wrap.querySelectorAll("tr.clickable").forEach(row => {
+        row.addEventListener("click", () => selectJob(row.dataset.jobId));
+      });
     }
 
     function renderWorkers(workers) {
@@ -286,16 +410,136 @@
       }
       wrap.innerHTML = `<table>
         <thead><tr>
-          <th>ID</th><th>Status</th><th>Queue</th><th>Current job</th><th>Last heartbeat</th>
+          <th>ID</th><th>Status</th><th>Health</th><th>Queue</th><th>Current job</th><th>Heartbeat</th>
         </tr></thead>
-        <tbody>${items.map(w => `<tr>
-          <td class="mono">${w.id}</td>
-          <td>${badge(w.status)}</td>
-          <td>${w.queue_name}</td>
-          <td class="mono">${w.current_job_id ? shortId(w.current_job_id) : "—"}</td>
-          <td>${fmtTime(w.last_heartbeat_at)}</td>
-        </tr>`).join("")}</tbody>
+        <tbody>${items.map(w => {
+          const health = heartbeatHealth(w);
+          return `<tr class="clickable${selectedWorkerId === w.id ? " selected" : ""}"
+            data-worker-id="${w.id}">
+            <td class="mono">${w.id}</td>
+            <td>${badge(w.status)}</td>
+            <td>${badge(health.badge)}</td>
+            <td>${w.queue_name}</td>
+            <td class="mono">${w.current_job_id ? shortId(w.current_job_id) : "—"}</td>
+            <td>${fmtAgo(w.last_heartbeat_at)}</td>
+          </tr>`;
+        }).join("")}</tbody>
       </table>`;
+
+      wrap.querySelectorAll("tr.clickable").forEach(row => {
+        row.addEventListener("click", () => selectWorker(row.dataset.workerId));
+      });
+    }
+
+    async function loadJobDetail(jobId) {
+      const panel = document.getElementById("job-detail-panel");
+      panel.classList.remove("empty-hint");
+      panel.innerHTML = '<div class="empty">Loading job detail…</div>';
+
+      try {
+        const [jobRes, eventsRes] = await Promise.all([
+          fetch(`/api/jobs/${jobId}`),
+          fetch(`/api/jobs/${jobId}/events`),
+        ]);
+        if (!jobRes.ok) throw new Error("Job not found");
+        const job = await jobRes.json();
+        const events = eventsRes.ok ? await eventsRes.json() : [];
+
+        const runtime = runtimeSeconds(job);
+        const fields = [
+          ["Job ID", job.id],
+          ["Type", job.job_type],
+          ["Status", badge(job.status)],
+          ["Queue", job.queue_name],
+          ["Priority", job.priority],
+          ["Attempts", `${job.attempts} / ${job.max_attempts}`],
+          ["Run at", fmtTime(job.run_at)],
+          ["Started", fmtTime(job.started_at)],
+          ["Completed", fmtTime(job.completed_at)],
+          ["Runtime", runtime != null ? `${runtime}s` : "—"],
+          ["Locked by", job.locked_by || "—"],
+          ["Lease expires", fmtTime(job.lease_expires_at)],
+          ["Created", fmtTime(job.created_at)],
+        ];
+
+        const errorBlock = job.last_error
+          ? `<div class="error-text"><strong>Last error:</strong> ${escapeHtml(job.last_error)}</div>`
+          : "";
+
+        const eventsHtml = events.length === 0
+          ? '<div class="empty">No events recorded</div>'
+          : `<table class="timeline-table">
+              <thead><tr><th>Time</th><th>Event</th><th>Details</th></tr></thead>
+              <tbody>${events.map(e => `<tr>
+                <td>${fmtTime(e.created_at)}</td>
+                <td>${e.event_type}</td>
+                <td class="mono">${escapeHtml(JSON.stringify(e.payload || {}))}</td>
+              </tr>`).join("")}</tbody>
+            </table>`;
+
+        panel.innerHTML = `
+          <h3>Job detail</h3>
+          <dl class="kv-grid">${fields.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("")}</dl>
+          ${errorBlock}
+          <h3>Payload</h3>
+          <pre class="payload-pre">${escapeHtml(JSON.stringify(job.payload || {}, null, 2))}</pre>
+          <h3>Event timeline</h3>
+          ${eventsHtml}
+        `;
+      } catch (err) {
+        panel.innerHTML = `<div class="error-text">Failed to load job: ${escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    async function loadWorkerDetail(workerId) {
+      const panel = document.getElementById("worker-detail-panel");
+      panel.classList.remove("empty-hint");
+      panel.innerHTML = '<div class="empty">Loading worker detail…</div>';
+
+      try {
+        const res = await fetch(`/api/workers/${workerId}`);
+        if (!res.ok) throw new Error("Worker not found");
+        const worker = await res.json();
+        const health = heartbeatHealth(worker);
+
+        const currentJobCell = worker.current_job_id
+          ? `<button type="button" class="link-btn mono" data-job-link="${worker.current_job_id}">${worker.current_job_id}</button>`
+          : "—";
+
+        const fields = [
+          ["Worker ID", worker.id],
+          ["Status", badge(worker.status)],
+          ["Health estimate", badge(health.badge) + ` (${health.label})`],
+          ["Queue", worker.queue_name],
+          ["Current job", currentJobCell],
+          ["Last heartbeat", `${fmtTime(worker.last_heartbeat_at)} (${fmtAgo(worker.last_heartbeat_at)})`],
+          ["Registered", fmtTime(worker.created_at)],
+          ["Updated", fmtTime(worker.updated_at)],
+        ];
+
+        panel.innerHTML = `
+          <h3>Worker health</h3>
+          <p style="font-size:0.875rem;color:var(--muted);margin-bottom:0.75rem">
+            Heartbeat is considered stale after ${HEARTBEAT_STALE_SECONDS}s without an update while status is online.
+          </p>
+          <dl class="kv-grid">${fields.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("")}</dl>
+        `;
+
+        const jobLink = panel.querySelector("[data-job-link]");
+        if (jobLink) {
+          jobLink.addEventListener("click", () => selectJob(jobLink.dataset.jobLink));
+        }
+      } catch (err) {
+        panel.innerHTML = `<div class="error-text">Failed to load worker: ${escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    function escapeHtml(text) {
+      return String(text)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
     }
 
     async function refresh() {
@@ -328,6 +572,9 @@
 
         if (jobsRes.ok) renderJobs(await jobsRes.json());
         if (workersRes.ok) renderWorkers(await workersRes.json());
+
+        if (selectedJobId) await loadJobDetail(selectedJobId);
+        if (selectedWorkerId) await loadWorkerDetail(selectedWorkerId);
 
         document.getElementById("last-updated").textContent =
           "Updated " + new Date().toLocaleTimeString();

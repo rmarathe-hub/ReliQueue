@@ -2,7 +2,7 @@
 
 A durable distributed job queue and task scheduler built with **FastAPI**, **Postgres**, and **Python workers**.
 
-ReliQueue stores jobs in Postgres, exposes a REST API for submission and inspection, and runs Python workers that claim and execute jobs safely under concurrency. Retries, dead-letter handling, and a dashboard are coming in later weeks.
+ReliQueue stores jobs in Postgres, exposes a REST API for submission and inspection, and runs Python workers that claim and execute jobs safely under concurrency. Failed jobs retry with exponential backoff, permanently failed jobs dead-letter, and a live dashboard surfaces queue health for demos and debugging.
 
 ## What works today
 
@@ -23,11 +23,25 @@ ReliQueue stores jobs in Postgres, exposes a REST API for submission and inspect
 - Successful job completion and `job_succeeded` events
 - Multi-worker demo scripts and concurrency tests
 
+**Week 3 — Reliability**
+
+- Failure handling with exponential backoff and jitter
+- Manual retry and job cancellation APIs
+- Dead-letter queue after max attempts
+- Worker lease recovery for crashed workers
+- Worker list/detail APIs and reliability test suite
+
+**Week 4 — Observability and demo**
+
+- `GET /api/metrics` — queue depth, status counts, worker counts, recent activity
+- Live HTML dashboard at `/dashboard` with metrics, job drill-down, and worker health
+- One-command demo script (`scripts/run_demo.py`) for portfolio walkthroughs
+
 ## Architecture
 
 ```mermaid
 flowchart TB
-    Client[API Client] --> API[FastAPI]
+    Client[API Client / Dashboard] --> API[FastAPI]
     API --> DB[(Postgres)]
 
     W1[Worker 1] --> DB
@@ -41,23 +55,60 @@ flowchart TB
     end
 ```
 
+### Worker execution loop
+
+```mermaid
+sequenceDiagram
+    participant W as Worker
+    participant DB as Postgres
+
+    W->>DB: register + heartbeat
+    loop Poll cycle
+        W->>DB: recover expired leases (optional)
+        W->>DB: claim next pending job (SKIP LOCKED)
+        alt job available
+            W->>W: run handler
+            alt success
+                W->>DB: mark succeeded + job_succeeded event
+            else failure
+                W->>DB: mark failed/retry/dead-letter + job_failed event
+            end
+        else no job
+            W->>W: sleep poll interval
+        end
+        W->>DB: heartbeat
+    end
+```
+
+### Job lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending: POST /api/jobs
+    pending --> running: worker claims job
+    running --> succeeded: handler completes
+    running --> pending: failure with retries left (backoff via run_at)
+    running --> dead_lettered: max attempts exceeded
+    pending --> cancelled: POST /api/jobs/{id}/cancel
+    running --> pending: lease expires (recovery)
+    dead_lettered --> pending: POST /api/jobs/{id}/retry
+    succeeded --> [*]
+    dead_lettered --> [*]
+    cancelled --> [*]
+```
+
 **Submit path**
 
 1. Client submits a job via `POST /api/jobs`.
 2. API writes a `pending` row to `jobs` and a `job_created` event to `job_events`.
-3. Client polls list/detail/events endpoints to inspect job state.
+3. Client polls list/detail/events endpoints (or the dashboard) to inspect job state.
 
 **Worker path**
 
 1. Each worker registers in `workers` and polls its queue on an interval.
 2. A worker claims the next eligible `pending` job inside a Postgres transaction using `FOR UPDATE SKIP LOCKED`.
-3. The worker runs the handler, then marks the job `succeeded` and appends a `job_succeeded` event.
+3. The worker runs the handler, then marks the job `succeeded` or records a failure with retry/dead-letter logic.
 4. Multiple workers can poll the same queue without claiming the same job twice.
-
-**Coming in Week 3+**
-
-- Retries with backoff, dead-letter queue, and lease recovery for crashed workers
-- Metrics, dashboard, CI, and portfolio polish
 
 ## Prerequisites
 
@@ -123,6 +174,9 @@ curl http://localhost:8000/api/jobs/JOB_ID/events
 
 # Queue metrics snapshot
 curl http://localhost:8000/api/metrics
+
+# List workers
+curl http://localhost:8000/api/workers
 ```
 
 Example metrics response:
@@ -152,6 +206,20 @@ Example metrics response:
 docker compose down
 ```
 
+## Dashboard
+
+The dashboard at [http://localhost:8000/dashboard](http://localhost:8000/dashboard) auto-refreshes every 5 seconds and polls existing API endpoints — no separate frontend build step.
+
+| View | What it shows |
+|------|----------------|
+| **Metrics cards** | Pending, running, succeeded, dead-letter, cancelled, workers, hourly activity, avg runtime |
+| **Queue depth** | Eligible pending jobs per queue |
+| **Recent jobs** | Click any row for payload, attempts, last error, and full event timeline |
+| **Workers** | Status, heartbeat age, health estimate (healthy / stale / offline), current job |
+| **Worker detail** | Heartbeat timestamps, queue assignment, link to current job |
+
+Capture a screenshot after running `python scripts/run_demo.py` with workers active for portfolio READMEs or LinkedIn posts.
+
 ## Local development (without Docker API)
 
 Useful if you want hot reload outside the container.
@@ -179,6 +247,10 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 | `GET` | `/api/jobs` | List jobs (`status`, `queue_name`, `job_type`, `limit`, `offset`) |
 | `GET` | `/api/jobs/{job_id}` | Job detail |
 | `GET` | `/api/jobs/{job_id}/events` | Job event timeline |
+| `POST` | `/api/jobs/{job_id}/retry` | Manual retry (dead-lettered jobs) |
+| `POST` | `/api/jobs/{job_id}/cancel` | Cancel a pending job |
+| `GET` | `/api/workers` | List workers |
+| `GET` | `/api/workers/{worker_id}` | Worker detail |
 | `GET` | `/api/metrics` | Queue and worker snapshot metrics |
 | `GET` | `/dashboard` | Live HTML dashboard (auto-refreshes every 5s) |
 
@@ -220,6 +292,14 @@ pytest -v
 
 Tests use a separate `reliqueue_test` database, create it if needed, run migrations, and truncate tables between tests.
 
+```bash
+# Reliability suite only
+pytest -m reliability -v
+
+# Exclude slow concurrency test
+pytest -m "not slow" -v
+```
+
 ## Workers
 
 Start a worker process (requires Postgres running and migrations applied):
@@ -236,7 +316,7 @@ Optional flags:
 python -m app.worker.runner --worker-id worker-1 --queue-name default --poll-interval 2
 ```
 
-The worker registers in the `workers` table, claims pending jobs using Postgres `FOR UPDATE SKIP LOCKED`, runs the matching handler, and marks successful jobs `succeeded`. Failure handling is added on Day 15.
+The worker registers in the `workers` table, claims pending jobs using Postgres `FOR UPDATE SKIP LOCKED`, runs the matching handler, and marks successful jobs `succeeded`.
 
 ### Supported demo job types
 
@@ -276,6 +356,43 @@ python scripts/verify_queue.py --expected-succeeded 20
 
 The verify script prints status counts, claims per worker, and fails if any job has duplicate `job_claimed` events.
 
+### One-command portfolio demo
+
+With API and Postgres running (`docker compose up`), start at least one worker:
+
+```bash
+cd backend
+source .venv/bin/activate
+python -m app.worker.runner --worker-id worker-1
+```
+
+From another terminal (repo root, backend venv activated):
+
+```bash
+python scripts/run_demo.py
+```
+
+This script:
+
+1. Checks API health
+2. Seeds a mixed batch (10 `sleep`, 3 `fail_once`, 2 `fail_always`)
+3. Polls `/api/metrics` until the queue is idle (`pending=0`, `running=0`)
+4. Runs duplicate-claim verification via `verify_queue.py`
+5. Prints the dashboard URL: `http://localhost:8000/dashboard`
+
+Useful flags:
+
+```bash
+# Seed only, do not wait for workers
+python scripts/run_demo.py --no-wait
+
+# Re-run against an existing batch (skip seed)
+python scripts/run_demo.py --skip-seed --no-wait
+
+# Show metrics after manual verification
+python scripts/verify_queue.py --show-metrics
+```
+
 ### How workers claim jobs
 
 ReliQueue uses Postgres row locks instead of a separate coordination service. When a worker polls for work, `claim_next_job` runs a transaction that:
@@ -297,9 +414,9 @@ Each job should be claimed at most once per attempt. The automated test `test_co
 - no duplicate job IDs appear in claim results
 - each job has a single `job_claimed` event
 
-**Lease fields**
+**Lease recovery**
 
-`locked_by`, `locked_at`, and `lease_expires_at` record which worker owns a running job and for how long. Lease recovery for crashed workers is added in Week 3.
+`locked_by`, `locked_at`, and `lease_expires_at` record which worker owns a running job. If a worker crashes, `recover_expired_leases` returns the job to `pending` so another worker can reclaim it.
 
 ## Configuration
 
@@ -311,6 +428,9 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `TEST_DATABASE_URL` | Postgres URL used by pytest |
 | `DEBUG` | Enable FastAPI debug mode |
 | `WORKER_LEASE_SECONDS` | Worker lease duration for claimed jobs |
+| `WORKER_RECOVERY_INTERVAL_SECONDS` | How often workers scan for expired leases |
+| `RETRY_BASE_DELAY_SECONDS` | Base delay for exponential backoff |
+| `RETRY_MAX_DELAY_SECONDS` | Cap on retry backoff delay |
 
 ## Project structure
 
@@ -318,12 +438,13 @@ Copy `.env.example` to `.env` and adjust as needed.
 ReliQueue/
 ├── backend/
 │   ├── app/
-│   │   ├── api/routes/      # HTTP handlers (health, jobs)
+│   │   ├── api/routes/      # HTTP handlers (health, jobs, workers, metrics, dashboard)
 │   │   ├── core/            # Settings
 │   │   ├── db/              # Engine and session
 │   │   ├── models/          # SQLAlchemy models
 │   │   ├── schemas/         # Pydantic models
 │   │   ├── services/        # Business logic
+│   │   ├── static/          # Dashboard HTML
 │   │   ├── worker/          # Worker runner CLI
 │   │   └── main.py
 │   ├── alembic/             # Migrations
@@ -332,7 +453,11 @@ ReliQueue/
 │   ├── pytest.ini
 │   └── requirements.txt
 ├── docker-compose.yml
+├── docs/
+│   └── test_matrix.md       # Test coverage map
 ├── scripts/
+│   ├── demo_common.py       # Shared demo helpers (metrics, seed specs)
+│   ├── run_demo.py          # End-to-end portfolio demo
 │   ├── seed_jobs.py         # Submit demo jobs via API
 │   └── verify_queue.py      # Queue summary and duplicate-claim check
 ├── .env.example
@@ -344,7 +469,7 @@ ReliQueue/
 - [x] Week 1 — API foundation, schema, job lifecycle endpoints, tests
 - [x] Week 2 — Worker engine and safe concurrent claiming
 - [x] Week 3 — Retries, dead-letter queue, lease recovery
-- [ ] Week 4 — Metrics, dashboard, demo scripts (metrics + dashboard done)
+- [x] Week 4 — Metrics, dashboard, demo scripts
 - [ ] Week 5 — CI, integration tests, documentation
 - [ ] Week 6 — Portfolio polish
 
