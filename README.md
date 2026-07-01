@@ -94,6 +94,8 @@ Expected:
 
 Open interactive docs: [http://localhost:8000/docs](http://localhost:8000/docs)
 
+Open the live dashboard: [http://localhost:8000/dashboard](http://localhost:8000/dashboard)
+
 ### 4. Create a job
 
 ```bash
@@ -178,6 +180,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 | `GET` | `/api/jobs/{job_id}` | Job detail |
 | `GET` | `/api/jobs/{job_id}/events` | Job event timeline |
 | `GET` | `/api/metrics` | Queue and worker snapshot metrics |
+| `GET` | `/dashboard` | Live HTML dashboard (auto-refreshes every 5s) |
 
 ### Job submission body
 
@@ -341,7 +344,7 @@ ReliQueue/
 - [x] Week 1 — API foundation, schema, job lifecycle endpoints, tests
 - [x] Week 2 — Worker engine and safe concurrent claiming
 - [x] Week 3 — Retries, dead-letter queue, lease recovery
-- [ ] Week 4 — Metrics, dashboard, demo scripts (metrics endpoint done)
+- [ ] Week 4 — Metrics, dashboard, demo scripts (metrics + dashboard done)
 - [ ] Week 5 — CI, integration tests, documentation
 - [ ] Week 6 — Portfolio polish
 

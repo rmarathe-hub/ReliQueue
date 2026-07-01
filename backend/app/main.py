@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.api.routes.dashboard import router as dashboard_router
 from app.api.routes.health import router as health_router
 from app.api.routes.jobs import router as jobs_router
 from app.api.routes.metrics import router as metrics_router
@@ -23,6 +24,7 @@ app = FastAPI(
 )
 
 app.include_router(health_router)
+app.include_router(dashboard_router)
 app.include_router(jobs_router)
 app.include_router(workers_router)
 app.include_router(metrics_router)

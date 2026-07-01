@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ReliQueue Dashboard</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --surface: #1a2332;
+      --surface2: #243044;
+      --border: #2d3a4f;
+      --text: #e7ecf3;
+      --muted: #8b9cb3;
+      --accent: #3b82f6;
+      --pending: #f59e0b;
+      --running: #3b82f6;
+      --succeeded: #10b981;
+      --dead: #ef4444;
+      --cancelled: #6b7280;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      line-height: 1.5;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1rem 1.5rem;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+
+    header h1 { font-size: 1.25rem; font-weight: 600; }
+    header h1 span { color: var(--accent); }
+
+    .meta {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      font-size: 0.875rem;
+      color: var(--muted);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--succeeded);
+      display: inline-block;
+    }
+
+    .status-dot.error { background: var(--dead); }
+
+    main { padding: 1.5rem; max-width: 1400px; margin: 0 auto; }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem;
+    }
+
+    .card label {
+      display: block;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      margin-bottom: 0.25rem;
+    }
+
+    .card .value { font-size: 1.75rem; font-weight: 700; }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+    }
+
+    @media (max-width: 900px) {
+      .grid-2 { grid-template-columns: 1fr; }
+    }
+
+    section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    section h2 {
+      font-size: 0.875rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface2);
+    }
+
+    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+
+    th, td {
+      text-align: left;
+      padding: 0.625rem 1rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    th { color: var(--muted); font-weight: 500; font-size: 0.75rem; text-transform: uppercase; }
+
+    tr:last-child td { border-bottom: none; }
+
+    .badge {
+      display: inline-block;
+      padding: 0.125rem 0.5rem;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 500;
+      text-transform: lowercase;
+    }
+
+    .badge.pending { background: rgba(245, 158, 11, 0.2); color: var(--pending); }
+    .badge.running { background: rgba(59, 130, 246, 0.2); color: var(--running); }
+    .badge.succeeded { background: rgba(16, 185, 129, 0.2); color: var(--succeeded); }
+    .badge.dead_lettered { background: rgba(239, 68, 68, 0.2); color: var(--dead); }
+    .badge.cancelled { background: rgba(107, 114, 128, 0.2); color: var(--cancelled); }
+    .badge.online { background: rgba(16, 185, 129, 0.2); color: var(--succeeded); }
+    .badge.offline { background: rgba(107, 114, 128, 0.2); color: var(--cancelled); }
+
+    .mono { font-family: ui-monospace, monospace; font-size: 0.8125rem; }
+
+    .empty { padding: 2rem; text-align: center; color: var(--muted); }
+
+    .error-banner {
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid var(--dead);
+      color: #fca5a5;
+      padding: 0.75rem 1rem;
+      border-radius: 8px;
+      margin-bottom: 1rem;
+      display: none;
+    }
+
+    .queue-depth { margin-top: 1.5rem; }
+    .queue-tags { display: flex; flex-wrap: wrap; gap: 0.5rem; padding: 1rem; }
+    .queue-tag {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.375rem 0.75rem;
+      font-size: 0.875rem;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1><span>ReliQueue</span> Dashboard</h1>
+    <div class="meta">
+      <span><span id="health-dot" class="status-dot"></span> <span id="health-label">Checking…</span></span>
+      <span id="last-updated">—</span>
+      <span>Auto-refresh 5s</span>
+    </div>
+  </header>
+
+  <main>
+    <div id="error-banner" class="error-banner"></div>
+
+    <div class="cards" id="metric-cards"></div>
+
+    <div class="queue-depth section">
+      <h2>Queue depth (eligible pending)</h2>
+      <div id="queue-depth" class="queue-tags"></div>
+    </div>
+
+    <div class="grid-2" style="margin-top: 1.5rem;">
+      <section>
+        <h2>Recent jobs</h2>
+        <div id="jobs-table-wrap"></div>
+      </section>
+      <section>
+        <h2>Workers</h2>
+        <div id="workers-table-wrap"></div>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    const REFRESH_MS = 5000;
+
+    function badge(status) {
+      const cls = status.replace(/ /g, "_");
+      return `<span class="badge ${cls}">${status}</span>`;
+    }
+
+    function fmtTime(iso) {
+      if (!iso) return "—";
+      return new Date(iso).toLocaleString();
+    }
+
+    function shortId(id) {
+      if (!id) return "—";
+      return id.slice(0, 8) + "…";
+    }
+
+    function renderCards(metrics) {
+      const by = metrics.jobs_by_status || {};
+      const cards = [
+        { label: "Pending", value: by.pending ?? 0 },
+        { label: "Running", value: by.running ?? 0 },
+        { label: "Succeeded", value: by.succeeded ?? 0 },
+        { label: "Dead letter", value: metrics.dead_letter_count ?? 0 },
+        { label: "Cancelled", value: by.cancelled ?? 0 },
+        { label: "Workers", value: metrics.worker_count ?? 0 },
+        { label: "Jobs (1h)", value: metrics.jobs_created_last_hour ?? 0 },
+        { label: "Failures (1h)", value: metrics.failures_last_hour ?? 0 },
+        {
+          label: "Avg runtime",
+          value: metrics.avg_runtime_seconds != null
+            ? metrics.avg_runtime_seconds.toFixed(2) + "s"
+            : "—",
+        },
+      ];
+      document.getElementById("metric-cards").innerHTML = cards
+        .map(c => `<div class="card"><label>${c.label}</label><div class="value">${c.value}</div></div>`)
+        .join("");
+    }
+
+    function renderQueueDepth(metrics) {
+      const depth = metrics.queue_depth || {};
+      const entries = Object.entries(depth);
+      const el = document.getElementById("queue-depth");
+      if (entries.length === 0) {
+        el.innerHTML = '<div class="empty">No eligible pending jobs</div>';
+        return;
+      }
+      el.innerHTML = entries
+        .map(([q, n]) => `<span class="queue-tag"><strong>${q}</strong>: ${n}</span>`)
+        .join("");
+    }
+
+    function renderJobs(jobs) {
+      const items = jobs.items || [];
+      const wrap = document.getElementById("jobs-table-wrap");
+      if (items.length === 0) {
+        wrap.innerHTML = '<div class="empty">No jobs yet</div>';
+        return;
+      }
+      wrap.innerHTML = `<table>
+        <thead><tr>
+          <th>ID</th><th>Type</th><th>Status</th><th>Queue</th><th>Attempts</th><th>Created</th>
+        </tr></thead>
+        <tbody>${items.map(j => `<tr>
+          <td class="mono" title="${j.id}">${shortId(j.id)}</td>
+          <td>${j.job_type}</td>
+          <td>${badge(j.status)}</td>
+          <td>${j.queue_name}</td>
+          <td>${j.attempts}/${j.max_attempts}</td>
+          <td>${fmtTime(j.created_at)}</td>
+        </tr>`).join("")}</tbody>
+      </table>`;
+    }
+
+    function renderWorkers(workers) {
+      const items = workers.items || [];
+      const wrap = document.getElementById("workers-table-wrap");
+      if (items.length === 0) {
+        wrap.innerHTML = '<div class="empty">No workers registered</div>';
+        return;
+      }
+      wrap.innerHTML = `<table>
+        <thead><tr>
+          <th>ID</th><th>Status</th><th>Queue</th><th>Current job</th><th>Last heartbeat</th>
+        </tr></thead>
+        <tbody>${items.map(w => `<tr>
+          <td class="mono">${w.id}</td>
+          <td>${badge(w.status)}</td>
+          <td>${w.queue_name}</td>
+          <td class="mono">${w.current_job_id ? shortId(w.current_job_id) : "—"}</td>
+          <td>${fmtTime(w.last_heartbeat_at)}</td>
+        </tr>`).join("")}</tbody>
+      </table>`;
+    }
+
+    async function refresh() {
+      const banner = document.getElementById("error-banner");
+      banner.style.display = "none";
+
+      try {
+        const [healthRes, metricsRes, jobsRes, workersRes] = await Promise.all([
+          fetch("/health"),
+          fetch("/api/metrics"),
+          fetch("/api/jobs?limit=20"),
+          fetch("/api/workers?limit=20"),
+        ]);
+
+        const healthDot = document.getElementById("health-dot");
+        const healthLabel = document.getElementById("health-label");
+
+        if (healthRes.ok) {
+          healthDot.classList.remove("error");
+          healthLabel.textContent = "API healthy";
+        } else {
+          healthDot.classList.add("error");
+          healthLabel.textContent = "API degraded";
+        }
+
+        if (!metricsRes.ok) throw new Error("Failed to load metrics");
+        const metrics = await metricsRes.json();
+        renderCards(metrics);
+        renderQueueDepth(metrics);
+
+        if (jobsRes.ok) renderJobs(await jobsRes.json());
+        if (workersRes.ok) renderWorkers(await workersRes.json());
+
+        document.getElementById("last-updated").textContent =
+          "Updated " + new Date().toLocaleTimeString();
+      } catch (err) {
+        banner.textContent = "Dashboard refresh failed: " + err.message;
+        banner.style.display = "block";
+        document.getElementById("health-dot").classList.add("error");
+        document.getElementById("health-label").textContent = "Unavailable";
+      }
+    }
+
+    refresh();
+    setInterval(refresh, REFRESH_MS);
+  </script>
+</body>
+</html>
