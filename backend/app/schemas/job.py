@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models.enums import JobStatus
 
@@ -14,6 +14,14 @@ class JobCreate(BaseModel):
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=255)
     queue_name: str = Field(default="default", min_length=1, max_length=128)
     priority: int = Field(default=0, ge=0)
+
+    @field_validator("job_type")
+    @classmethod
+    def validate_job_type_not_blank(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("job_type must not be empty or whitespace")
+        return stripped
 
 
 class JobResponse(BaseModel):

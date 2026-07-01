@@ -21,7 +21,7 @@ async def complete_job_failure(
     if job is None or job.status != JobStatus.RUNNING:
         return None
 
-    if job.locked_by is not None and job.locked_by != worker_id:
+    if job.locked_by != worker_id:
         return None
 
     job.last_error = error

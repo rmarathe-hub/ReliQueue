@@ -221,3 +221,32 @@ async def test_nonexistent_job_mutations_return_none_or_error(db_session_factory
             await manual_retry_job(db, missing_id)
         with pytest.raises(LookupError):
             await cancel_job(db, missing_id)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_cannot_transition_to_running_without_manual_retry(db_session_factory):
+    async with db_session_factory() as db:
+        await register_worker(db, "worker-1", "default")
+        await create_pending_job(db, status=JobStatus.CANCELLED)
+        claimed = await claim_next_job(db, worker_id="worker-1", queue_name="default")
+
+    assert claimed is None
+
+
+@pytest.mark.asyncio
+async def test_running_without_lock_cannot_complete(db_session_factory):
+    async with db_session_factory() as db:
+        await register_worker(db, "worker-1", "default")
+        job = await create_pending_job(db, status=JobStatus.RUNNING, locked_by=None)
+        result = await complete_job_success(db, job.id, "worker-1")
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_dead_lettered_cannot_fail_again(db_session_factory):
+    async with db_session_factory() as db:
+        job = await create_pending_job(db, status=JobStatus.DEAD_LETTERED, attempts=3)
+        result = await complete_job_failure(db, job.id, "worker-1", "again")
+
+    assert result is None

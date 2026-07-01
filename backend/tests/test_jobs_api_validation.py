@@ -51,13 +51,22 @@ def test_create_job_validation_errors(client, invalid_body):
     assert response.status_code == 422
 
 
-def test_create_job_whitespace_job_type_accepted_by_current_validation(client):
+@pytest.mark.parametrize("job_type", ["", " ", "   "])
+def test_create_job_rejects_empty_or_whitespace_job_type(client, job_type):
     response = client.post(
         "/api/jobs",
-        json={"job_type": " ", "payload": {}, "idempotency_key": "whitespace-type"},
+        json={"job_type": job_type, "payload": {}, "idempotency_key": "bad-type-key"},
+    )
+    assert response.status_code == 422
+
+
+def test_create_job_strips_surrounding_whitespace_from_job_type(client):
+    response = client.post(
+        "/api/jobs",
+        json={"job_type": " sleep ", "payload": {}, "idempotency_key": "strip-type"},
     )
     assert response.status_code == 201
-    assert response.json()["job_type"] == " "
+    assert response.json()["job_type"] == "sleep"
 
 
 def test_create_job_default_queue_name(client):

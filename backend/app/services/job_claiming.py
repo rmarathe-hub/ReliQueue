@@ -27,7 +27,7 @@ async def claim_next_job(
             Job.queue_name == queue_name,
             Job.run_at <= now,
         )
-        .order_by(Job.priority.desc(), Job.run_at.asc())
+        .order_by(Job.priority.desc(), Job.run_at.asc(), Job.created_at.asc(), Job.id.asc())
         .limit(1)
         .with_for_update(skip_locked=True)
     )

@@ -300,3 +300,68 @@ async def test_retry_then_success_event_order(db_session_factory, no_retry_delay
         JobEventType.JOB_CLAIMED,
         JobEventType.JOB_SUCCEEDED,
     ]
+
+
+def test_metrics_reflect_lifecycle_statuses(client, job_payload):
+    created = client.post("/api/jobs", json=job_payload)
+    job_id = created.json()["id"]
+
+    before = client.get("/api/metrics").json()
+    assert before["jobs_by_status"]["pending"] >= 1
+
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+    from tests.conftest import TEST_DATABASE_URL
+
+    async def run():
+        engine = create_async_engine(TEST_DATABASE_URL, echo=False)
+        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        try:
+            async with factory() as db:
+                await register_worker(db, "worker-metrics", "default")
+                claimed = await claim_next_job(db, worker_id="worker-metrics", queue_name="default")
+                if str(claimed.id) == job_id:
+                    await complete_job_success(db, claimed.id, "worker-metrics")
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+    after = client.get("/api/metrics").json()
+    assert after["jobs_by_status"]["succeeded"] >= 1
+
+
+def test_dashboard_loads_after_seeded_lifecycle(client, job_payload):
+    client.post("/api/jobs", json=job_payload)
+    response = client.get("/dashboard")
+    assert response.status_code == 200
+    assert "ReliQueue" in response.text
+
+
+def test_api_cancel_then_manual_retry_then_claimable(client, job_payload):
+    created = client.post("/api/jobs", json=job_payload)
+    job_id = created.json()["id"]
+    client.post(f"/api/jobs/{job_id}/cancel")
+    client.post(f"/api/jobs/{job_id}/retry")
+
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+    from tests.conftest import TEST_DATABASE_URL
+
+    async def run():
+        engine = create_async_engine(TEST_DATABASE_URL, echo=False)
+        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        try:
+            async with factory() as db:
+                await register_worker(db, "worker-cancel-retry", "default")
+                return await claim_next_job(db, worker_id="worker-cancel-retry", queue_name="default")
+        finally:
+            await engine.dispose()
+
+    claimed = asyncio.run(run())
+    assert claimed is not None
+    assert str(claimed.id) == job_id

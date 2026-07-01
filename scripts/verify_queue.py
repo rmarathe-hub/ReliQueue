@@ -7,8 +7,15 @@ import argparse
 import sys
 import time
 from collections import Counter
+from pathlib import Path
 
 import httpx
+
+_SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+
+from demo_common import fetch_metrics, format_metrics_summary
 
 TERMINAL_STATUSES = {"succeeded", "dead_lettered", "cancelled"}
 
@@ -101,6 +108,11 @@ def parse_args() -> argparse.Namespace:
         default=1.0,
         help="Polling interval while waiting",
     )
+    parser.add_argument(
+        "--show-metrics",
+        action="store_true",
+        help="Print /api/metrics snapshot after verification",
+    )
     return parser.parse_args()
 
 
@@ -146,6 +158,9 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
+
+    if args.show_metrics:
+        print(format_metrics_summary(fetch_metrics(client)))
 
     print("no duplicate job_claimed events detected")
     return 0
