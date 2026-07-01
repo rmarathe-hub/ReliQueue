@@ -1,8 +1,39 @@
 # ReliQueue Test Coverage Matrix
 
-Last updated: Pre–Week 5 quality hardening (440 tests).
+Last updated: Week 5 Day 30 (439 tests).
 
 This matrix maps behavior areas to tests, gaps addressed in the latest expansion, and remaining risk. Priority: **critical**, **important**, **nice-to-have**.
+
+---
+
+## Running tests
+
+| Command | Count | Purpose |
+|---------|-------|---------|
+| `pytest -v` | 439 | Full local validation |
+| `pytest -m "not slow" -v` | 436 | CI / fast feedback (excludes stress tests) |
+| `pytest -m reliability -v` | 7 | Core reliability slice (`test_reliability.py`) |
+| `pytest -m slow -v` | 3 | Concurrency stress only |
+
+**Prerequisites:** Postgres running; `TEST_DATABASE_URL` pointing at `reliqueue_test` (see README).
+
+### Pytest markers
+
+| Marker | Scope |
+|--------|--------|
+| `reliability` | Retries, backoff, manual retry, cancel, lease recovery, DLQ event timelines |
+| `slow` | Large-batch concurrency (`test_concurrency.py`, `test_concurrency_extended.py`) |
+
+### Intentional overlap
+
+Some behaviors are covered in more than one file on purpose:
+
+| Area | Files | Why |
+|------|-------|-----|
+| State machine guards | `test_job_state_machine.py`, `test_state_machine_extended.py` | Core transitions vs additional invalid-transition edge cases |
+| Worker ownership | `test_job_state_machine.py`, `test_ownership_guards.py` | State machine context vs focused lock/ownership regression suite |
+| Demo scripts | `test_demo_scripts.py`, `test_demo_scripts_extended.py`, `test_demo_script_regressions.py` | Helper unit tests, extended coverage, README/shell regressions |
+| Dashboard | `test_dashboard.py`, `test_dashboard_extended.py`, `test_dashboard_security.py` | Smoke, UI sections, security/static-file checks |
 
 ---
 
@@ -10,7 +41,7 @@ This matrix maps behavior areas to tests, gaps addressed in the latest expansion
 
 | Metric | Value |
 |--------|-------|
-| **Total tests** | 440 |
+| **Total tests** | 439 |
 | **Reliability (`-m reliability`)** | 7 |
 | **Slow (`-m slow`)** | 3 |
 | **Full suite runtime** | ~30s |
@@ -37,7 +68,7 @@ This matrix maps behavior areas to tests, gaps addressed in the latest expansion
 | **Existing tests** | `test_jobs_api.py`, `test_jobs_api_validation.py`, `test_jobs_api_detail.py` |
 | **Coverage** | Valid create, defaults, payload variants, max_attempts bounds, priority, queue_name, field presence, list-after-create |
 | **New tests added** | `test_jobs_api_detail.py` — response fields, max_attempts=1 |
-| **Remaining risk** | Whitespace `job_type` accepted (documented) |
+| **Remaining risk** | Low |
 | **Priority** | critical — covered |
 
 ---
@@ -262,7 +293,7 @@ This matrix maps behavior areas to tests, gaps addressed in the latest expansion
 
 | Item | Detail |
 |------|--------|
-| **Existing tests** | `test_demo_scripts.py`, `test_demo_scripts_extended.py` |
+| **Existing tests** | `test_demo_scripts.py`, `test_demo_scripts_extended.py`, `test_demo_script_regressions.py` |
 | **Coverage** | Profiles, payloads, verify_claims duplicate detection, shell script executable, README alignment |
 | **New tests added** | `test_demo_scripts_extended.py` (16) |
 | **Remaining risk** | `demo_run.sh` not executed in CI (Docker required) |
@@ -275,7 +306,7 @@ This matrix maps behavior areas to tests, gaps addressed in the latest expansion
 | Area | Status |
 |------|--------|
 | **Load-test readiness** | Concurrency + metrics bulk tests; no `load_test.py` yet |
-| **CI readiness** | `test_ci_readiness.py` — markers, collect, migrations, truncate, no personal paths |
+| **CI readiness** | `test_ci_readiness.py` — markers, collect, migrations, truncate, no personal paths, `ci.yml` workflow |
 | **Structured logging** | Not implemented (Week 5) |
 | **README accuracy** | Checked in demo script tests |
 
@@ -288,6 +319,8 @@ This matrix maps behavior areas to tests, gaps addressed in the latest expansion
 | Week 3 audit baseline | 101 |
 | Pre–Week 4 expansion | 231 |
 | Post–Week 4 | 248 |
-| **Pre–Week 5 hardening** | **440** |
+| **Pre–Week 5 hardening** | 440 |
+| **Week 5 Day 29 hygiene** | 438 |
+| **Week 5 Day 30 CI** | **439** |
 
 No shallow inflation — parametrized tests cover real API/service behaviors only.

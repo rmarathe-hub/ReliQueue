@@ -13,7 +13,7 @@ ReliQueue stores jobs in Postgres, exposes a REST API for submission and inspect
 - Durable job schema (`jobs`, `job_events`, `workers`)
 - Job submission with idempotency keys
 - Job list, detail, and event timeline APIs
-- Postgres-backed pytest suite
+- 439-test Postgres-backed pytest suite with documented markers (`reliability`, `slow`)
 
 **Week 2 — Worker engine**
 
@@ -282,22 +282,63 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 ## Tests
 
-Requires Postgres (for example `docker compose up db`).
+**439 Postgres-backed integration tests** across API validation, job state machine, worker claiming, retries/DLQ, lease recovery, metrics, dashboard, concurrency, and demo scripts. Full suite runs in ~30 seconds on a laptop.
+
+Requires Postgres (for example `docker compose up db`). Tests use a separate `reliqueue_test` database — created automatically if missing — run Alembic migrations once per session, and truncate tables between tests.
+
+### Setup
 
 ```bash
 cd backend
 source .venv/bin/activate
 pip install -r requirements.txt
-pytest -v
+export TEST_DATABASE_URL=postgresql+asyncpg://reliqueue:reliqueue@localhost:5432/reliqueue_test
 ```
 
-Tests use a separate `reliqueue_test` database, create it if needed, run migrations, and truncate tables between tests.
+### Commands
+
+| Command | Tests | Use when |
+|---------|-------|----------|
+| `pytest -v` | 439 (full suite) | Local validation before a commit or PR |
+| `pytest -m "not slow" -v` | 436 | **CI and fast feedback** — skips 3 stress/concurrency tests |
+| `pytest -m reliability -v` | 7 | Core retry, DLQ, lease, cancel, and event-timeline scenarios |
+| `pytest -m slow -v` | 3 | High-volume concurrency only (200-job / multi-queue stress) |
 
 ```bash
-# Reliability suite only
-pytest -m reliability -v
+cd backend
+pytest -v                      # full suite
+pytest -m "not slow" -v        # recommended for CI
+pytest -m reliability -v       # reliability slice
+pytest -m slow -v              # stress tests only
+```
 
-# Exclude slow concurrency test
+### Pytest markers
+
+Defined in `backend/pytest.ini`:
+
+| Marker | Meaning |
+|--------|---------|
+| `reliability` | Week 3 reliability scenarios in `test_reliability.py` — retries, backoff, manual retry, cancellation, lease recovery, event timelines |
+| `slow` | Heavier concurrency tests (large job batches, parallel workers) — excluded from the default CI command |
+
+List registered markers: `pytest --markers`
+
+### Coverage map
+
+See [`docs/test_matrix.md`](docs/test_matrix.md) for behavior-area → test-file mapping, intentional overlap notes, and remaining risk.
+
+### CI
+
+GitHub Actions runs on every push/PR to `main`: Postgres 16 service, `alembic upgrade head`, then `pytest -m "not slow"` (436 tests). Workflow: [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+
+Run the same steps locally:
+
+```bash
+docker compose up -d db
+cd backend && source .venv/bin/activate
+export TEST_DATABASE_URL=postgresql+asyncpg://reliqueue:reliqueue@localhost:5432/reliqueue_test
+export DATABASE_URL="$TEST_DATABASE_URL"
+alembic upgrade head
 pytest -m "not slow" -v
 ```
 

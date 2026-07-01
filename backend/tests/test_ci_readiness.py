@@ -81,3 +81,13 @@ def test_helpers_module_available_for_shared_fixtures():
 
     assert callable(create_pending_job)
     assert callable(seed_metrics_dataset)
+
+
+def test_github_actions_ci_workflow_exists():
+    workflow = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml"
+    assert workflow.is_file()
+    text = workflow.read_text(encoding="utf-8")
+    assert "postgres:16" in text
+    assert "TEST_DATABASE_URL" in text
+    assert "alembic upgrade head" in text
+    assert 'pytest -m "not slow"' in text
