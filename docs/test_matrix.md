@@ -1,6 +1,6 @@
 # ReliQueue Test Coverage Matrix
 
-Last updated: Week 5 Day 33 (449 tests).
+Last updated: Week 5 Day 34 (453 tests).
 
 This matrix maps behavior areas to tests, gaps addressed in the latest expansion, and remaining risk. Priority: **critical**, **important**, **nice-to-have**.
 
@@ -10,8 +10,8 @@ This matrix maps behavior areas to tests, gaps addressed in the latest expansion
 
 | Command | Count | Purpose |
 |---------|-------|---------|
-| `pytest -v` | 449 | Full local validation |
-| `pytest -m "not slow" -v` | 446 | CI / fast feedback (excludes stress tests) |
+| `pytest -v` | 453 | Full local validation |
+| `pytest -m "not slow" -v` | 450 | CI / fast feedback (excludes stress tests) |
 | `pytest -m reliability -v` | 7 | Core reliability slice (`test_reliability.py`) |
 | `pytest -m slow -v` | 3 | Concurrency stress only |
 
@@ -41,7 +41,7 @@ Some behaviors are covered in more than one file on purpose:
 
 | Metric | Value |
 |--------|-------|
-| **Total tests** | 449 |
+| **Total tests** | 453 |
 | **Reliability (`-m reliability`)** | 7 |
 | **Slow (`-m slow`)** | 3 |
 | **Full suite runtime** | ~30s |
@@ -308,6 +308,7 @@ Some behaviors are covered in more than one file on purpose:
 | **Load-test readiness** | `scripts/load_test.py` — 500 jobs / 5 workers benchmark; README documents results |
 | **CI readiness** | `test_ci_readiness.py` — markers, collect, migrations, `ci.yml` + `slow-tests.yml` workflows |
 | **Structured logging** | `app/worker/structured_log.py` — JSON worker lifecycle logs (`test_worker_structured_logging.py`) |
+| **Tradeoffs doc** | `docs/tradeoffs.md` — Postgres vs brokers, Celery/BullMQ table, parity roadmap (`test_tradeoffs_doc.py`) |
 | **README accuracy** | Checked in demo script tests |
 
 ---
@@ -324,6 +325,7 @@ Some behaviors are covered in more than one file on purpose:
 | **Week 5 Day 30 CI** | 439 |
 | **Week 5 Day 31 CI hardening** | 440 |
 | **Week 5 Day 32 load test** | 445 |
-| **Week 5 Day 33 structured logging** | **449** |
+| **Week 5 Day 33 structured logging** | 449 |
+| **Week 5 Day 34 tradeoffs doc** | **453** |
 
 No shallow inflation — parametrized tests cover real API/service behaviors only.
