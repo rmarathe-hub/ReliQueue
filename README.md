@@ -118,6 +118,30 @@ curl http://localhost:8000/api/jobs/JOB_ID
 
 # Event timeline
 curl http://localhost:8000/api/jobs/JOB_ID/events
+
+# Queue metrics snapshot
+curl http://localhost:8000/api/metrics
+```
+
+Example metrics response:
+
+```json
+{
+  "jobs_by_status": {
+    "pending": 2,
+    "running": 1,
+    "succeeded": 10,
+    "dead_lettered": 0,
+    "cancelled": 0
+  },
+  "dead_letter_count": 0,
+  "queue_depth": {"default": 1},
+  "jobs_created_last_hour": 3,
+  "failures_last_hour": 1,
+  "workers_by_status": {"online": 2, "offline": 0},
+  "worker_count": 2,
+  "avg_runtime_seconds": 1.05
+}
 ```
 
 ### Stop services
@@ -153,6 +177,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 | `GET` | `/api/jobs` | List jobs (`status`, `queue_name`, `job_type`, `limit`, `offset`) |
 | `GET` | `/api/jobs/{job_id}` | Job detail |
 | `GET` | `/api/jobs/{job_id}/events` | Job event timeline |
+| `GET` | `/api/metrics` | Queue and worker snapshot metrics |
 
 ### Job submission body
 
@@ -315,8 +340,8 @@ ReliQueue/
 
 - [x] Week 1 — API foundation, schema, job lifecycle endpoints, tests
 - [x] Week 2 — Worker engine and safe concurrent claiming
-- [ ] Week 3 — Retries, dead-letter queue, lease recovery
-- [ ] Week 4 — Metrics, dashboard, demo scripts
+- [x] Week 3 — Retries, dead-letter queue, lease recovery
+- [ ] Week 4 — Metrics, dashboard, demo scripts (metrics endpoint done)
 - [ ] Week 5 — CI, integration tests, documentation
 - [ ] Week 6 — Portfolio polish
 
