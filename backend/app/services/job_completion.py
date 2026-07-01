@@ -18,6 +18,9 @@ async def complete_job_success(
     if job is None or job.status != JobStatus.RUNNING:
         return None
 
+    if job.locked_by is not None and job.locked_by != worker_id:
+        return None
+
     now = datetime.now(UTC)
     job.status = JobStatus.SUCCEEDED
     job.completed_at = now

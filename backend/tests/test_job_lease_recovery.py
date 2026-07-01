@@ -134,3 +134,114 @@ async def test_recovered_job_can_be_claimed_again(db_session_factory):
     assert reclaimed.status == JobStatus.RUNNING
     assert reclaimed.locked_by == "worker-2"
     assert reclaimed.attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_recover_skips_pending_job(db_session_factory):
+    async with db_session_factory() as db:
+        await create_pending_job(db, idempotency_key="lease-pending-skip")
+        recovered = await recover_expired_leases(db, queue_name="default")
+
+    assert recovered == []
+
+
+@pytest.mark.asyncio
+async def test_recover_skips_succeeded_job(db_session_factory):
+    async with db_session_factory() as db:
+        await create_pending_job(db, status=JobStatus.SUCCEEDED, idempotency_key="lease-succeeded-skip")
+        recovered = await recover_expired_leases(db, queue_name="default")
+
+    assert recovered == []
+
+
+@pytest.mark.asyncio
+async def test_recover_preserves_attempts(db_session_factory):
+    expired_at = datetime.now(UTC) - timedelta(minutes=1)
+
+    async with db_session_factory() as db:
+        await register_worker(db, "worker-1", "default")
+        await create_pending_job(db, idempotency_key="lease-preserve-attempts")
+
+    async with db_session_factory() as db:
+        claimed = await claim_next_job(db, worker_id="worker-1", queue_name="default")
+        stored = await db.get(Job, claimed.id)
+        stored.lease_expires_at = expired_at
+        await db.commit()
+
+    async with db_session_factory() as db:
+        recovered = await recover_expired_leases(db, queue_name="default")
+
+    assert len(recovered) == 1
+    assert recovered[0].attempts == 1
+
+
+@pytest.mark.asyncio
+async def test_recover_skips_cancelled_job(db_session_factory):
+    async with db_session_factory() as db:
+        await create_pending_job(db, status=JobStatus.CANCELLED, idempotency_key="lease-cancel-skip")
+        recovered = await recover_expired_leases(db, queue_name="default")
+
+    assert recovered == []
+
+
+@pytest.mark.asyncio
+async def test_recover_skips_dead_lettered_job(db_session_factory):
+    async with db_session_factory() as db:
+        await create_pending_job(db, status=JobStatus.DEAD_LETTERED, idempotency_key="lease-dl-skip")
+        recovered = await recover_expired_leases(db, queue_name="default")
+
+    assert recovered == []
+
+
+@pytest.mark.asyncio
+async def test_repeated_recovery_is_idempotent(db_session_factory):
+    expired_at = datetime.now(UTC) - timedelta(minutes=1)
+
+    async with db_session_factory() as db:
+        await register_worker(db, "worker-1", "default")
+        await create_pending_job(db, idempotency_key="lease-idempotent")
+
+    async with db_session_factory() as db:
+        claimed = await claim_next_job(db, worker_id="worker-1", queue_name="default")
+        stored = await db.get(Job, claimed.id)
+        stored.lease_expires_at = expired_at
+        await db.commit()
+
+    async with db_session_factory() as db:
+        first = await recover_expired_leases(db, queue_name="default")
+        second = await recover_expired_leases(db, queue_name="default")
+
+    assert len(first) == 1
+    assert second == []
+
+
+@pytest.mark.asyncio
+async def test_recovery_with_no_expired_jobs_is_safe(db_session_factory):
+    async with db_session_factory() as db:
+        recovered = await recover_expired_leases(db, queue_name="default")
+
+    assert recovered == []
+
+
+@pytest.mark.asyncio
+async def test_recovery_respects_queue_name_filter(db_session_factory):
+    expired_at = datetime.now(UTC) - timedelta(minutes=1)
+
+    async with db_session_factory() as db:
+        await register_worker(db, "worker-1", "queue-a")
+        await register_worker(db, "worker-2", "queue-b")
+        await create_pending_job(db, queue_name="queue-a", idempotency_key="lease-qa")
+        await create_pending_job(db, queue_name="queue-b", idempotency_key="lease-qb")
+
+    async with db_session_factory() as db:
+        for worker_id, queue in (("worker-1", "queue-a"), ("worker-2", "queue-b")):
+            claimed = await claim_next_job(db, worker_id=worker_id, queue_name=queue)
+            stored = await db.get(Job, claimed.id)
+            stored.lease_expires_at = expired_at
+        await db.commit()
+
+    async with db_session_factory() as db:
+        recovered = await recover_expired_leases(db, queue_name="queue-a")
+
+    assert len(recovered) == 1
+    assert recovered[0].queue_name == "queue-a"

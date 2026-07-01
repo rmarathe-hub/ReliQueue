@@ -10,26 +10,7 @@ from app.models.job import Job
 from app.models.job_event import JobEvent
 from app.services.job_claiming import claim_next_job
 from app.services.workers import register_worker
-
-
-async def create_pending_job(db, **overrides) -> Job:
-    now = datetime.now(UTC)
-    values = {
-        "job_type": "sleep",
-        "payload": {"seconds": 1},
-        "status": JobStatus.PENDING,
-        "queue_name": "default",
-        "priority": 0,
-        "max_attempts": 3,
-        "attempts": 0,
-        "run_at": now,
-    }
-    values.update(overrides)
-    job = Job(**values)
-    db.add(job)
-    await db.commit()
-    await db.refresh(job)
-    return job
+from tests.helpers import create_pending_job
 
 
 @pytest.mark.asyncio
@@ -204,3 +185,78 @@ async def test_claim_next_job_sets_lease_in_future(db_session_factory):
     assert claimed.lease_expires_at is not None
     assert claimed.lease_expires_at > before
     assert claimed.lease_expires_at > after
+
+
+@pytest.mark.asyncio
+async def test_claim_next_job_skips_dead_lettered_job(db_session_factory):
+    async with db_session_factory() as db:
+        await register_worker(db, "worker-1", "default")
+        await create_pending_job(db, status=JobStatus.DEAD_LETTERED, idempotency_key="dead-letter-skip")
+        claimed = await claim_next_job(db, worker_id="worker-1", queue_name="default")
+
+    assert claimed is None
+
+
+@pytest.mark.asyncio
+async def test_claim_next_job_respects_queue_name(db_session_factory):
+    async with db_session_factory() as db:
+        await register_worker(db, "worker-1", "default")
+        other_queue_job = await create_pending_job(
+            db,
+            queue_name="priority",
+            idempotency_key="other-queue",
+        )
+        default_job = await create_pending_job(db, queue_name="default", idempotency_key="default-queue")
+        claimed = await claim_next_job(db, worker_id="worker-1", queue_name="default")
+
+    assert claimed is not None
+    assert claimed.id == default_job.id
+    assert claimed.id != other_queue_job.id
+
+
+@pytest.mark.asyncio
+async def test_claim_next_job_skips_already_running_job(db_session_factory):
+    async with db_session_factory() as db:
+        await register_worker(db, "worker-1", "default")
+        running_job = await create_pending_job(db, status=JobStatus.RUNNING, locked_by="worker-1", idempotency_key="running-skip")
+        await create_pending_job(db, idempotency_key="pending-claim")
+        claimed = await claim_next_job(db, worker_id="worker-1", queue_name="default")
+
+    assert claimed is not None
+    assert claimed.id != running_job.id
+    assert claimed.status == JobStatus.RUNNING
+
+
+@pytest.mark.asyncio
+async def test_claim_sets_worker_current_job_id(db_session_factory):
+    from app.models.worker import Worker
+
+    async with db_session_factory() as db:
+        await register_worker(db, "worker-1", "default")
+        job = await create_pending_job(db, idempotency_key="current-job")
+        claimed = await claim_next_job(db, worker_id="worker-1", queue_name="default")
+        worker = await db.get(Worker, "worker-1")
+
+    assert claimed is not None
+    assert worker is not None
+    assert worker.current_job_id == job.id
+
+
+@pytest.mark.asyncio
+async def test_claiming_one_job_does_not_mutate_unrelated_jobs(db_session_factory):
+    from sqlalchemy import select
+
+    from app.models.job import Job
+
+    async with db_session_factory() as db:
+        await register_worker(db, "worker-1", "default")
+        await create_pending_job(db, idempotency_key="claim-target", priority=10)
+        other = await create_pending_job(db, idempotency_key="claim-other", priority=0)
+        await claim_next_job(db, worker_id="worker-1", queue_name="default")
+
+    async with db_session_factory() as db:
+        result = await db.execute(select(Job).where(Job.id == other.id))
+        untouched = result.scalar_one()
+
+    assert untouched.status == JobStatus.PENDING
+    assert untouched.attempts == 0

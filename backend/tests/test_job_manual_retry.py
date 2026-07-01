@@ -113,3 +113,68 @@ def test_retry_missing_job_returns_404(client):
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Job not found"
+
+
+def test_retry_succeeded_job_returns_409(client, job_payload):
+    created = client.post("/api/jobs", json=job_payload)
+    job_id = created.json()["id"]
+
+    with psycopg.connect(TEST_DATABASE_SYNC_URL) as conn:
+        conn.execute(
+            "UPDATE jobs SET status = 'SUCCEEDED' WHERE id = %s",
+            (job_id,),
+        )
+        conn.commit()
+
+    response = client.post(f"/api/jobs/{job_id}/retry")
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["status"] == "succeeded"
+
+
+def test_retry_running_job_returns_409(client, job_payload):
+    created = client.post("/api/jobs", json=job_payload)
+    job_id = created.json()["id"]
+
+    with psycopg.connect(TEST_DATABASE_SYNC_URL) as conn:
+        conn.execute(
+            "UPDATE jobs SET status = 'RUNNING', locked_by = 'worker-1' WHERE id = %s",
+            (job_id,),
+        )
+        conn.commit()
+
+    response = client.post(f"/api/jobs/{job_id}/retry")
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["status"] == "running"
+
+
+def test_retry_invalid_uuid_returns_422(client):
+    assert client.post("/api/jobs/not-a-uuid/retry").status_code == 422
+
+
+def test_retried_job_appears_in_pending_filter(client):
+    created = client.post(
+        "/api/jobs",
+        json={
+            "job_type": "sleep",
+            "payload": {},
+            "idempotency_key": "retry-pending-filter",
+        },
+    )
+    job_id = created.json()["id"]
+
+    with psycopg.connect(TEST_DATABASE_SYNC_URL) as conn:
+        conn.execute(
+            "UPDATE jobs SET status = 'DEAD_LETTERED', attempts = 3, last_error = 'fail' WHERE id = %s",
+            (job_id,),
+        )
+        conn.commit()
+
+    client.post(f"/api/jobs/{job_id}/retry")
+
+    response = client.get("/api/jobs", params={"status": "pending"})
+
+    assert response.status_code == 200
+    ids = {item["id"] for item in response.json()["items"]}
+    assert job_id in ids

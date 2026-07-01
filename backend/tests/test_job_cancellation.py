@@ -105,3 +105,65 @@ def test_cancel_missing_job_returns_404(client):
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Job not found"
+
+
+@pytest.mark.asyncio
+async def test_cancel_rejects_dead_lettered_job(db_session_factory):
+    async with db_session_factory() as db:
+        job = await create_pending_job(db, status=JobStatus.DEAD_LETTERED, idempotency_key="cancel-dead-letter")
+
+        with pytest.raises(JobCancellationNotAllowedError):
+            await cancel_job(db, job.id)
+
+
+def test_cancel_succeeded_job_returns_409(client, job_payload):
+    created = client.post("/api/jobs", json=job_payload)
+    job_id = created.json()["id"]
+
+    with psycopg.connect(TEST_DATABASE_SYNC_URL) as conn:
+        conn.execute("UPDATE jobs SET status = 'SUCCEEDED' WHERE id = %s", (job_id,))
+        conn.commit()
+
+    response = client.post(f"/api/jobs/{job_id}/cancel")
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["status"] == "succeeded"
+
+
+def test_cancel_dead_lettered_job_returns_409(client, job_payload):
+    created = client.post("/api/jobs", json=job_payload)
+    job_id = created.json()["id"]
+
+    with psycopg.connect(TEST_DATABASE_SYNC_URL) as conn:
+        conn.execute("UPDATE jobs SET status = 'DEAD_LETTERED' WHERE id = %s", (job_id,))
+        conn.commit()
+
+    response = client.post(f"/api/jobs/{job_id}/cancel")
+
+    assert response.status_code == 409
+
+
+def test_cancel_invalid_uuid_returns_422(client):
+    assert client.post("/api/jobs/not-a-uuid/cancel").status_code == 422
+
+
+def test_cancelled_job_appears_in_cancelled_filter(client, job_payload):
+    created = client.post("/api/jobs", json=job_payload)
+    job_id = created.json()["id"]
+    client.post(f"/api/jobs/{job_id}/cancel")
+
+    response = client.get("/api/jobs", params={"status": "cancelled"})
+
+    assert response.status_code == 200
+    ids = {item["id"] for item in response.json()["items"]}
+    assert job_id in ids
+
+
+@pytest.mark.asyncio
+async def test_cancel_rejects_already_cancelled_job(db_session_factory):
+    async with db_session_factory() as db:
+        job = await create_pending_job(db, idempotency_key="cancel-twice")
+        await cancel_job(db, job.id)
+
+        with pytest.raises(JobCancellationNotAllowedError):
+            await cancel_job(db, job.id)

@@ -221,3 +221,25 @@ async def test_fail_once_retries_then_succeeds(db_session_factory, no_retry_dela
 
     assert completed is not None
     assert completed.status == JobStatus.SUCCEEDED
+
+
+@pytest.mark.asyncio
+async def test_dead_letter_does_not_write_retry_scheduled_event(db_session_factory):
+    async with db_session_factory() as db:
+        await register_worker(db, "worker-1", "default")
+        job = await create_pending_job(db, max_attempts=1)
+
+    async with db_session_factory() as db:
+        claimed = await claim_next_job(db, worker_id="worker-1", queue_name="default")
+        await complete_job_failure(db, claimed.id, "worker-1", "final failure")
+
+    async with db_session_factory() as db:
+        result = await db.execute(
+            select(JobEvent).where(
+                JobEvent.job_id == job.id,
+                JobEvent.event_type == JobEventType.JOB_RETRY_SCHEDULED,
+            )
+        )
+        events = list(result.scalars().all())
+
+    assert events == []

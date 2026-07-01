@@ -106,3 +106,35 @@ async def test_complete_job_success_ignores_pending_job(db_session_factory):
         result = await complete_job_success(db, job.id, "worker-1")
 
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_complete_job_success_rejects_wrong_worker(db_session_factory):
+    async with db_session_factory() as db:
+        await register_worker(db, "worker-1", "default")
+        await register_worker(db, "worker-2", "default")
+        await create_pending_job(db)
+
+    async with db_session_factory() as db:
+        claimed = await claim_next_job(db, worker_id="worker-1", queue_name="default")
+
+    async with db_session_factory() as db:
+        result = await complete_job_success(db, claimed.id, "worker-2")
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_complete_job_success_rejects_already_succeeded_job(db_session_factory):
+    async with db_session_factory() as db:
+        await register_worker(db, "worker-1", "default")
+        await create_pending_job(db)
+
+    async with db_session_factory() as db:
+        claimed = await claim_next_job(db, worker_id="worker-1", queue_name="default")
+        await complete_job_success(db, claimed.id, "worker-1")
+
+    async with db_session_factory() as db:
+        result = await complete_job_success(db, claimed.id, "worker-1")
+
+    assert result is None
