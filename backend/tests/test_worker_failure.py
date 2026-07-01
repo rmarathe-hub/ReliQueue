@@ -12,14 +12,6 @@ from app.worker.handlers import execute_job
 from tests.test_worker_claiming import create_pending_job
 
 
-@pytest.fixture
-def no_retry_delay(monkeypatch):
-    def immediate_retry(now: datetime, attempts: int, **kwargs) -> datetime:
-        return now
-
-    monkeypatch.setattr("app.services.job_failure.calculate_retry_run_at", immediate_retry)
-
-
 @pytest.mark.asyncio
 async def test_complete_job_failure_schedules_retry_when_attempts_remain(db_session_factory, monkeypatch):
     fixed_now = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)

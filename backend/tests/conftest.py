@@ -1,6 +1,7 @@
 import os
 
 import asyncio
+from datetime import datetime
 
 import psycopg
 import pytest
@@ -90,3 +91,11 @@ def job_payload() -> dict:
         "max_attempts": 3,
         "idempotency_key": "test-job-1",
     }
+
+
+@pytest.fixture
+def no_retry_delay(monkeypatch):
+    def immediate_retry(now: datetime, attempts: int, **kwargs) -> datetime:
+        return now
+
+    monkeypatch.setattr("app.services.job_failure.calculate_retry_run_at", immediate_retry)
