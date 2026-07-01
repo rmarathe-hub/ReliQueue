@@ -40,6 +40,37 @@ async def touch_worker_heartbeat(db: AsyncSession, worker_id: str) -> None:
     await db.commit()
 
 
+async def get_worker_by_id(db: AsyncSession, worker_id: str) -> Worker | None:
+    return await db.get(Worker, worker_id)
+
+
+async def list_workers(
+    db: AsyncSession,
+    *,
+    status: WorkerStatus | None = None,
+    queue_name: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> tuple[list[Worker], int]:
+    filters = []
+    if status is not None:
+        filters.append(Worker.status == status)
+    if queue_name is not None:
+        filters.append(Worker.queue_name == queue_name)
+
+    total_result = await db.execute(select(func.count()).select_from(Worker).where(*filters))
+    total = total_result.scalar_one()
+
+    result = await db.execute(
+        select(Worker)
+        .where(*filters)
+        .order_by(Worker.last_heartbeat_at.desc().nulls_last(), Worker.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    return list(result.scalars().all()), total
+
+
 async def count_available_jobs(db: AsyncSession, queue_name: str) -> int:
     now = datetime.now(UTC)
     result = await db.execute(

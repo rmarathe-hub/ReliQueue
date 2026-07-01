@@ -4,6 +4,7 @@ from fastapi import FastAPI
 
 from app.api.routes.health import router as health_router
 from app.api.routes.jobs import router as jobs_router
+from app.api.routes.workers import router as workers_router
 from app.core.config import settings
 from app.db.session import engine
 
@@ -22,3 +23,4 @@ app = FastAPI(
 
 app.include_router(health_router)
 app.include_router(jobs_router)
+app.include_router(workers_router)

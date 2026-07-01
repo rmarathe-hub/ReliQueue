@@ -13,7 +13,13 @@ from app.schemas.job import (
     JobListResponse,
     JobResponse,
 )
-from app.services.job_errors import IdempotencyConflictError
+from app.services.job_errors import (
+    IdempotencyConflictError,
+    JobCancellationNotAllowedError,
+    ManualRetryNotAllowedError,
+)
+from app.services.job_cancellation import cancel_job
+from app.services.job_manual_retry import manual_retry_job
 from app.services.jobs import create_job, get_job_by_id, get_job_events, list_jobs
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
@@ -85,3 +91,43 @@ async def get_job_events_endpoint(
     if events is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
     return events
+
+
+@router.post("/{job_id}/retry", response_model=JobDetail)
+async def retry_job_endpoint(
+    job_id: UUID,
+    db: AsyncSession = Depends(get_db),
+) -> Job:
+    try:
+        return await manual_retry_job(db, job_id)
+    except LookupError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found") from None
+    except ManualRetryNotAllowedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": str(exc),
+                "job_id": exc.job_id,
+                "status": exc.status,
+            },
+        ) from exc
+
+
+@router.post("/{job_id}/cancel", response_model=JobDetail)
+async def cancel_job_endpoint(
+    job_id: UUID,
+    db: AsyncSession = Depends(get_db),
+) -> Job:
+    try:
+        return await cancel_job(db, job_id)
+    except LookupError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found") from None
+    except JobCancellationNotAllowedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": str(exc),
+                "job_id": exc.job_id,
+                "status": exc.status,
+            },
+        ) from exc

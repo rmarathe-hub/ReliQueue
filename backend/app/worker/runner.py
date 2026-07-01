@@ -2,12 +2,14 @@ import argparse
 import asyncio
 import logging
 import signal
+import time
 
 from app.core.config import settings
 from app.db.session import async_session_factory, engine
 from app.services.job_claiming import claim_next_job
 from app.services.job_completion import complete_job_success
 from app.services.job_failure import complete_job_failure
+from app.services.job_lease_recovery import recover_expired_leases
 from app.services.workers import register_worker, touch_worker_heartbeat
 from app.worker.handlers import UnknownJobTypeError, execute_job, get_handler, get_registered_job_types
 
@@ -36,7 +38,22 @@ async def run_worker(worker_id: str, queue_name: str, poll_interval: float) -> N
         settings.worker_lease_seconds,
     )
 
+    last_recovery_at = time.monotonic()
+
     while not stop_event.is_set():
+        now_mono = time.monotonic()
+        if now_mono - last_recovery_at >= settings.worker_recovery_interval_seconds:
+            async with async_session_factory() as db:
+                recovered_jobs = await recover_expired_leases(db, queue_name=queue_name)
+            if recovered_jobs:
+                logger.info(
+                    "[%s] recovered %s expired job lease(s) on queue=%s",
+                    worker_id,
+                    len(recovered_jobs),
+                    queue_name,
+                )
+            last_recovery_at = now_mono
+
         async with async_session_factory() as db:
             await touch_worker_heartbeat(db, worker_id)
             job = await claim_next_job(db, worker_id=worker_id, queue_name=queue_name)
