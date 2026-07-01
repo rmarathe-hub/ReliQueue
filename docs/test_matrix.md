@@ -1,6 +1,6 @@
 # ReliQueue Test Coverage Matrix
 
-Last updated: Week 5 Day 31 (440 tests).
+Last updated: Week 5 Day 32 (445 tests).
 
 This matrix maps behavior areas to tests, gaps addressed in the latest expansion, and remaining risk. Priority: **critical**, **important**, **nice-to-have**.
 
@@ -10,8 +10,8 @@ This matrix maps behavior areas to tests, gaps addressed in the latest expansion
 
 | Command | Count | Purpose |
 |---------|-------|---------|
-| `pytest -v` | 440 | Full local validation |
-| `pytest -m "not slow" -v` | 436 | CI / fast feedback (excludes stress tests) |
+| `pytest -v` | 445 | Full local validation |
+| `pytest -m "not slow" -v` | 442 | CI / fast feedback (excludes stress tests) |
 | `pytest -m reliability -v` | 7 | Core reliability slice (`test_reliability.py`) |
 | `pytest -m slow -v` | 3 | Concurrency stress only |
 
@@ -41,7 +41,7 @@ Some behaviors are covered in more than one file on purpose:
 
 | Metric | Value |
 |--------|-------|
-| **Total tests** | 440 |
+| **Total tests** | 445 |
 | **Reliability (`-m reliability`)** | 7 |
 | **Slow (`-m slow`)** | 3 |
 | **Full suite runtime** | ~30s |
@@ -305,7 +305,7 @@ Some behaviors are covered in more than one file on purpose:
 
 | Area | Status |
 |------|--------|
-| **Load-test readiness** | Concurrency + metrics bulk tests; no `load_test.py` yet |
+| **Load-test readiness** | `scripts/load_test.py` — 500 jobs / 5 workers benchmark; README documents results |
 | **CI readiness** | `test_ci_readiness.py` — markers, collect, migrations, `ci.yml` + `slow-tests.yml` workflows |
 | **Structured logging** | Not implemented (Week 5) |
 | **README accuracy** | Checked in demo script tests |
@@ -322,6 +322,7 @@ Some behaviors are covered in more than one file on purpose:
 | **Pre–Week 5 hardening** | 440 |
 | **Week 5 Day 29 hygiene** | 438 |
 | **Week 5 Day 30 CI** | 439 |
-| **Week 5 Day 31 CI hardening** | **440** |
+| **Week 5 Day 31 CI hardening** | 440 |
+| **Week 5 Day 32 load test** | **445** |
 
 No shallow inflation — parametrized tests cover real API/service behaviors only.

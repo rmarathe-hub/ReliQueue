@@ -15,7 +15,7 @@ ReliQueue stores jobs in Postgres, exposes a REST API for submission and inspect
 - Durable job schema (`jobs`, `job_events`, `workers`)
 - Job submission with idempotency keys
 - Job list, detail, and event timeline APIs
-- 440-test Postgres-backed pytest suite with documented markers (`reliability`, `slow`)
+- 445-test Postgres-backed pytest suite with documented markers (`reliability`, `slow`)
 
 **Week 2 — Worker engine**
 
@@ -284,7 +284,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 ## Tests
 
-**440 Postgres-backed integration tests** across API validation, job state machine, worker claiming, retries/DLQ, lease recovery, metrics, dashboard, concurrency, and demo scripts. Full suite runs in ~30 seconds on a laptop.
+**445 Postgres-backed integration tests** across API validation, job state machine, worker claiming, retries/DLQ, lease recovery, metrics, dashboard, concurrency, and demo scripts. Full suite runs in ~30 seconds on a laptop.
 
 Requires Postgres (for example `docker compose up db`). Tests use a separate `reliqueue_test` database — created automatically if missing — run Alembic migrations once per session, and truncate tables between tests.
 
@@ -301,8 +301,8 @@ export TEST_DATABASE_URL=postgresql+asyncpg://reliqueue:reliqueue@localhost:5432
 
 | Command | Tests | Use when |
 |---------|-------|----------|
-| `pytest -v` | 440 (full suite) | Local validation before a commit or PR |
-| `pytest -m "not slow" -v` | 436 | **CI and fast feedback** — skips 3 stress/concurrency tests |
+| `pytest -v` | 445 (full suite) | Local validation before a commit or PR |
+| `pytest -m "not slow" -v` | 442 | **CI and fast feedback** — skips 3 stress/concurrency tests |
 | `pytest -m reliability -v` | 7 | Core retry, DLQ, lease, cancel, and event-timeline scenarios |
 | `pytest -m slow -v` | 3 | High-volume concurrency only (200-job / multi-queue stress) |
 
@@ -337,7 +337,7 @@ On every push/PR to `main` ([`.github/workflows/ci.yml`](.github/workflows/ci.ym
 
 1. Postgres 16 service
 2. `alembic upgrade head`
-3. `pytest -m "not slow"` — 436 integration tests
+3. `pytest -m "not slow"` — 442 integration tests
 4. `pytest -m reliability` — 7 core retry/DLQ/lease scenarios
 
 **Slow tests** (3 concurrency stress tests) run on demand or weekly via [`.github/workflows/slow-tests.yml`](.github/workflows/slow-tests.yml) (`workflow_dispatch` or Mondays 06:00 UTC).
@@ -353,6 +353,34 @@ alembic upgrade head
 pytest -m "not slow" -v
 pytest -m reliability -v
 ```
+
+### Load test
+
+`scripts/load_test.py` submits a batch of `sleep` jobs via the API, starts worker processes, waits for completion, and verifies there are no duplicate `job_claimed` events.
+
+```bash
+docker compose up -d
+cd backend && source .venv/bin/activate
+python ../scripts/load_test.py --jobs 500 --workers 5
+```
+
+Use `--no-workers` if workers are already running on the target queue. Jobs use a dedicated queue (`load-test` by default) and a unique idempotency prefix so results stay isolated from other demo data.
+
+#### Load test results
+
+Measured locally (Docker Compose on macOS, Postgres 16, API + 5 worker processes, `sleep` jobs with `seconds: 0`):
+
+| Metric | Result |
+|--------|--------|
+| Jobs | 500 |
+| Workers | 5 |
+| Duplicate claims | **0** |
+| Submit time | 2.9s |
+| Processing time | 54.7s |
+| **Throughput** | **~9.1 jobs/sec** |
+| Outcomes | 500 succeeded, 0 failed, 0 dead-lettered |
+
+Resume-ready line: *500 jobs / 5 workers, 0 duplicate claims, ~9 jobs/sec (Postgres `SKIP LOCKED`, local Docker).*
 
 ## Workers
 
@@ -543,6 +571,7 @@ ReliQueue/
 ├── scripts/
 │   ├── demo_common.py       # Shared demo helpers (metrics, seed specs)
 │   ├── demo_run.sh          # Hands-off demo (Docker + workers + full batch)
+│   ├── load_test.py         # API load test (throughput + duplicate-claim check)
 │   ├── run_demo.py          # End-to-end portfolio demo via API
 │   ├── seed_jobs.py         # Submit demo jobs via API
 │   └── verify_queue.py      # Queue summary and duplicate-claim check
